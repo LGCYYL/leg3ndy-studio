@@ -21,8 +21,14 @@ import uvicorn
 import traceback
 
 if sys.platform.startswith('win'):
-    sys.stdout.reconfigure(encoding='utf-8')
-    sys.stderr.reconfigure(encoding='utf-8')
+    if sys.stdout is not None:
+        sys.stdout.reconfigure(encoding='utf-8')
+    else:
+        sys.stdout = open(os.devnull, 'w', encoding='utf-8')
+    if sys.stderr is not None:
+        sys.stderr.reconfigure(encoding='utf-8')
+    else:
+        sys.stderr = open(os.devnull, 'w', encoding='utf-8')
 
 app = FastAPI(title="LEG3NDY Studio API")
 

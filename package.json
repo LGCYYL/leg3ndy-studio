@@ -1,6 +1,6 @@
 {
   "name": "leg3ndy-studio",
-  "version": "1.1.3",
+  "version": "1.1.4",
   "description": "LEG3NDY Downloader Studio",
   "main": "main.js",
   "author": "LEG3NDY Tech",
@@ -47,7 +47,6 @@
       "createStartMenuShortcut": true,
       "shortcutName": "LEG3NDY Studio",
       "include": "resources_build/installer.nsh",
-      "deleteAppDataOnUninstall": true,
       "displayLanguageSelector": true,
       "runAfterFinish": true
     },

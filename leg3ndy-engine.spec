@@ -1,12 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_all
 
+# Collect ALL files (binaries, datas, hiddenimports) from curl_cffi
+# This is critical because curl_cffi ships native C DLLs that hiddenimports alone misses
+curl_datas, curl_binaries, curl_hiddenimports = collect_all('curl_cffi')
 
 a = Analysis(
     ['backend\\server.py'],
     pathex=[],
-    binaries=[],
-    datas=[],
-    hiddenimports=['curl_cffi', 'mutagen', 'websockets'],
+    binaries=curl_binaries,
+    datas=curl_datas,
+    hiddenimports=['mutagen', 'websockets'] + curl_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
