@@ -245,12 +245,17 @@ class YouTubeEngine:
         return hook
 
     def get_opts(self, mode='full', task_id=None):
+        if NODE_PATH:
+            node_dir = os.path.dirname(NODE_PATH)
+            if node_dir not in os.environ.get('PATH', ''):
+                os.environ['PATH'] = f"{node_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+
         opts = {
             'quiet': True, 'no_warnings': True, 'socket_timeout': 30, 'retries': 10,
             'user_agent': random.choice(self.user_agents), 'ignoreerrors': True,
             'nocheckcertificate': True, 'writethumbnail': True, 
             'cachedir': CACHE_DIR, 'paths': { 'home': APP_DATA_DIR },
-            'js_runtimes': {'node': {'path': NODE_PATH}} if NODE_PATH else {'node': {}},
+            'js_runtimes': {'node': {}},
         }
         cookie_path_root = os.path.join(PROJECT_ROOT, 'cookies.txt')
         cookie_path_appdata = os.path.join(APP_DATA_DIR, 'cookies.txt')
