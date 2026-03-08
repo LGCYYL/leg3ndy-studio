@@ -4,3 +4,6 @@ uvicorn
 pydantic
 requests
 beautifulsoup4
+curl-cffi
+mutagen
+websockets
