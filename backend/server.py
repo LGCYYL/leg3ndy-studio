@@ -90,6 +90,22 @@ def get_node_path():
     return None
 NODE_PATH = get_node_path()
 
+# CRÍTICO: Injeta o dir do node.exe no PATH e garante PATHEXT logo no startup.
+# O yt_dlp usa PATHEXT para achar executáveis no Windows; se estiver ausente no ambiente
+# do PyInstaller, o node.exe passa batido em _find_exe mesmo estando no PATH.
+if NODE_PATH:
+    node_dir = os.path.dirname(NODE_PATH)
+    # Garante PATHEXT com .EXE incluído
+    pathext = os.environ.get('PATHEXT', '.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC')
+    if '.EXE' not in pathext.upper():
+        pathext = '.EXE;' + pathext
+    os.environ['PATHEXT'] = pathext
+    # Injeta dir do node no início do PATH
+    current_path = os.environ.get('PATH', '')
+    if node_dir not in current_path:
+        os.environ['PATH'] = f"{node_dir}{os.pathsep}{current_path}"
+
+
 
 if not os.path.exists(HISTORY_FILE):
     with open(HISTORY_FILE, 'w', encoding='utf-8') as f: json.dump([], f, ensure_ascii=False)
@@ -245,11 +261,6 @@ class YouTubeEngine:
         return hook
 
     def get_opts(self, mode='full', task_id=None):
-        if NODE_PATH:
-            node_dir = os.path.dirname(NODE_PATH)
-            if node_dir not in os.environ.get('PATH', ''):
-                os.environ['PATH'] = f"{node_dir}{os.pathsep}{os.environ.get('PATH', '')}"
-
         opts = {
             'quiet': True, 'no_warnings': True, 'socket_timeout': 30, 'retries': 10,
             'user_agent': random.choice(self.user_agents), 'ignoreerrors': True,
