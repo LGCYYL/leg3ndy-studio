@@ -674,36 +674,6 @@ def r_reval():
 def r_appinfo(): 
     return {"version": "1.2.0 1080p-Stable", "engine": "LEG3NDY Core"}
 
-@app.get("/api/debug")
-def r_debug():
-    import subprocess as _sp
-    node_subprocess_test = None
-    node_version_test = None
-    if NODE_PATH:
-        try:
-            r = _sp.run([NODE_PATH, '--version'], capture_output=True, text=True, timeout=10)
-            node_subprocess_test = {'returncode': r.returncode, 'stdout': r.stdout.strip(), 'stderr': r.stderr.strip()}
-        except Exception as e:
-            node_subprocess_test = {'error': str(e)}
-        try:
-            from yt_dlp.utils._jsruntime import NodeJsRuntime
-            rt = NodeJsRuntime(path=NODE_PATH)
-            info = rt.info
-            node_version_test = str(info) if info else 'info=None (runtime rejected)'
-        except Exception as e:
-            node_version_test = str(e)
-    return {
-        "frozen": getattr(sys, 'frozen', False),
-        "sys_executable": sys.executable,
-        "node_path": NODE_PATH,
-        "node_exists": os.path.exists(NODE_PATH) if NODE_PATH else False,
-        "node_subprocess_test": node_subprocess_test,
-        "node_version_test": node_version_test,
-        "PATH": os.environ.get('PATH', '')[:500],
-        "PATHEXT": os.environ.get('PATHEXT', 'NOT SET'),
-        "ffmpeg_path": FFMPEG_PATH,
-        "files_in_exe_dir": os.listdir(os.path.dirname(sys.executable)) if getattr(sys, 'frozen', False) else None
-    }
 
 if __name__ == '__main__':
     uvicorn.run(app, host='127.0.0.1', port=5000, log_level="info")
