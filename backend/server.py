@@ -267,6 +267,7 @@ class YouTubeEngine:
             'nocheckcertificate': True, 'writethumbnail': True, 
             'cachedir': CACHE_DIR, 'paths': { 'home': APP_DATA_DIR },
             'js_runtimes': {'node': {'path': NODE_PATH}} if NODE_PATH else {'node': {}},
+            'remote_components': {'ejs:github'},
         }
         cookie_path_root = os.path.join(PROJECT_ROOT, 'cookies.txt')
         cookie_path_appdata = os.path.join(APP_DATA_DIR, 'cookies.txt')
