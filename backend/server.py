@@ -245,20 +245,16 @@ class YouTubeEngine:
         return hook
 
     def get_opts(self, mode='full', task_id=None):
-        js_runtimes_config = {}
         if NODE_PATH:
             node_dir = os.path.dirname(NODE_PATH)
             if node_dir not in os.environ.get('PATH', ''):
                 os.environ['PATH'] = f"{node_dir}{os.pathsep}{os.environ.get('PATH', '')}"
-            os.environ['NODE_SKIP_PLATFORM_CHECK'] = '1'
-            js_runtimes_config = {'node': {'path': NODE_PATH}}
 
         opts = {
             'quiet': True, 'no_warnings': True, 'socket_timeout': 30, 'retries': 10,
             'user_agent': random.choice(self.user_agents), 'ignoreerrors': True,
             'nocheckcertificate': True, 'writethumbnail': True, 
             'cachedir': CACHE_DIR, 'paths': { 'home': APP_DATA_DIR },
-            'js_runtimes': js_runtimes_config,
         }
         cookie_path_root = os.path.join(PROJECT_ROOT, 'cookies.txt')
         cookie_path_appdata = os.path.join(APP_DATA_DIR, 'cookies.txt')
@@ -327,6 +323,25 @@ class YouTubeEngine:
                     if info_fb and len(info_fb.get('formats', [])) > len((info_full or {}).get('formats', [])):
                         info_full = info_fb
                 except: pass
+
+        # Fallback CLI Extremo: bypass frozen subprocess bugs (quando Node não é chamado direito no PyInstaller)
+        if (not info_full or len(info_full.get('formats', [])) <= 5) and getattr(sys, 'frozen', False):
+            import subprocess
+            try:
+                cmd = [sys.executable, '-m', 'yt_dlp', '-j', '--no-warnings', '--extractor-args', 'youtube:player_client=android,web']
+                if NODE_PATH: cmd.extend(['--js-runtimes', f'node:{NODE_PATH}'])
+                cmd.append(url)
+                
+                env = os.environ.copy()
+                env['NODE_SKIP_PLATFORM_CHECK'] = '1'
+                
+                flags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+                res = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, creationflags=flags, env=env, text=True)
+                info_cli = json.loads(res.strip().split('\n')[-1])
+                if info_cli and len(info_cli.get('formats', [])) > len((info_full or {}).get('formats', [])):
+                    info_full = info_cli
+            except Exception as e:
+                pass
                     
         if not info_full: return {'error': 'Não foi possível extrair os dados. O vídeo pode ser privado, restrito ou inválido.'}
         return self.parse_video(info_full)
