@@ -1,0 +1,66 @@
+{
+  "name": "leg3ndy-studio",
+  "version": "1.0.1",
+  "description": "LEG3NDY Downloader Studio",
+  "main": "main.js",
+  "author": "LEG3NDY Tech",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "dependencies": {
+    "cross-env": "^7.0.3"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.leg3ndy.studio",
+    "productName": "LEG3NDY Studio",
+    "directories": {
+      "output": "dist_electron"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "icon-app.png",
+      "requestedExecutionLevel": "asInvoker",
+      "legalTrademarks": "LEG3NDY"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "LEG3NDY Studio",
+      "include": "resources_build/installer.nsh",
+      "deleteAppDataOnUninstall": true,
+      "displayLanguageSelector": true,
+      "runAfterFinish": true
+    },
+    "files": [
+      "**/*",
+      "!backend/**",
+      "!dist/**",
+      "!build/**",
+      "!resources_build/**",
+      "!*.py",
+      "!*.spec"
+    ],
+    "extraResources": [
+      {
+        "from": "resources_build/leg3ndy-engine.exe",
+        "to": "engine/leg3ndy-engine.exe"
+      },
+      {
+        "from": "resources_build/ffmpeg.exe",
+        "to": "engine/ffmpeg.exe"
+      },
+      {
+        "from": "icon-app.png",
+        "to": "icon-app.png"
+      }
+    ]
+  }
+}
