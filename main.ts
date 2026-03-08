@@ -15,14 +15,10 @@ app.setAppUserModelId('com.leg3ndy.studio');
 // --- ARGS ---
 const isHiddenStart = process.argv.includes('--hidden');
 
-const CONFIG_PATH = app.isPackaged
-    ? path.join(app.getPath('appData'), 'LEG3NDY Studio', 'config.json')
-    : path.join(__dirname, 'backend', 'config.json');
+const CONFIG_PATH = path.join(app.getPath('appData'), 'LEG3NDY Studio', 'config.json');
 
-if (app.isPackaged) {
-    const appDataDir = path.join(app.getPath('appData'), 'LEG3NDY Studio');
-    if (!fs.existsSync(appDataDir)) fs.mkdirSync(appDataDir, { recursive: true });
-}
+const appDataDir = path.join(app.getPath('appData'), 'LEG3NDY Studio');
+if (!fs.existsSync(appDataDir)) fs.mkdirSync(appDataDir, { recursive: true });
 
 let downloadWatcher: fs.FSWatcher | null = null;
 

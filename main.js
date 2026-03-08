@@ -46,14 +46,10 @@ let minimizeToTray = true;
 electron_1.app.setAppUserModelId('com.leg3ndy.studio');
 // --- ARGS ---
 const isHiddenStart = process.argv.includes('--hidden');
-const CONFIG_PATH = electron_1.app.isPackaged
-    ? path.join(electron_1.app.getPath('appData'), 'LEG3NDY Studio', 'config.json')
-    : path.join(__dirname, 'backend', 'config.json');
-if (electron_1.app.isPackaged) {
-    const appDataDir = path.join(electron_1.app.getPath('appData'), 'LEG3NDY Studio');
-    if (!fs.existsSync(appDataDir))
-        fs.mkdirSync(appDataDir, { recursive: true });
-}
+const CONFIG_PATH = path.join(electron_1.app.getPath('appData'), 'LEG3NDY Studio', 'config.json');
+const appDataDir = path.join(electron_1.app.getPath('appData'), 'LEG3NDY Studio');
+if (!fs.existsSync(appDataDir))
+    fs.mkdirSync(appDataDir, { recursive: true });
 let downloadWatcher = null;
 function debounce(func, delay) {
     let timeout;
