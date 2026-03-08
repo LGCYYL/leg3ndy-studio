@@ -266,6 +266,7 @@ class YouTubeEngine:
             'user_agent': random.choice(self.user_agents), 'ignoreerrors': True,
             'nocheckcertificate': True, 'writethumbnail': True, 
             'cachedir': CACHE_DIR, 'paths': { 'home': APP_DATA_DIR },
+            'js_runtimes': {'node': {'path': NODE_PATH}} if NODE_PATH else {'node': {}},
         }
         cookie_path_root = os.path.join(PROJECT_ROOT, 'cookies.txt')
         cookie_path_appdata = os.path.join(APP_DATA_DIR, 'cookies.txt')
@@ -674,14 +675,32 @@ def r_appinfo():
 
 @app.get("/api/debug")
 def r_debug():
+    import subprocess as _sp
+    node_subprocess_test = None
+    node_version_test = None
+    if NODE_PATH:
+        try:
+            r = _sp.run([NODE_PATH, '--version'], capture_output=True, text=True, timeout=10)
+            node_subprocess_test = {'returncode': r.returncode, 'stdout': r.stdout.strip(), 'stderr': r.stderr.strip()}
+        except Exception as e:
+            node_subprocess_test = {'error': str(e)}
+        try:
+            from yt_dlp.utils._jsruntime import NodeJsRuntime
+            rt = NodeJsRuntime(path=NODE_PATH)
+            info = rt.info
+            node_version_test = str(info) if info else 'info=None (runtime rejected)'
+        except Exception as e:
+            node_version_test = str(e)
     return {
         "frozen": getattr(sys, 'frozen', False),
         "sys_executable": sys.executable,
-        "base_dir": BASE_DIR,
         "node_path": NODE_PATH,
         "node_exists": os.path.exists(NODE_PATH) if NODE_PATH else False,
+        "node_subprocess_test": node_subprocess_test,
+        "node_version_test": node_version_test,
+        "PATH": os.environ.get('PATH', '')[:500],
+        "PATHEXT": os.environ.get('PATHEXT', 'NOT SET'),
         "ffmpeg_path": FFMPEG_PATH,
-        "cwd": os.getcwd(),
         "files_in_exe_dir": os.listdir(os.path.dirname(sys.executable)) if getattr(sys, 'frozen', False) else None
     }
 
