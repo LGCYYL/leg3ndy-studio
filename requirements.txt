@@ -1,6 +1,6 @@
-Flask
-Flask-Cors
-yt-dlp>=2024.0.0
-waitress>=2.1.2
+yt-dlp>=2026.03.03
+fastapi
+uvicorn
+pydantic
 requests
 beautifulsoup4

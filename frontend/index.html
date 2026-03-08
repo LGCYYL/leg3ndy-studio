@@ -162,6 +162,17 @@
                         <div id="playlistItems" class="pl-list"></div>
                     </div>
                 </div>
+
+                <!-- RESULTADO: BUSCA MULTIPLA -->
+                <div id="searchListArea" class="playlist-grid hidden">
+                    <div class="pl-header">
+                        <h3 id="slTitle">Resultados da Busca</h3>
+                        <p id="slCount">0 vídeos encontrados</p>
+                    </div>
+                    <div class="pl-list-container">
+                        <div id="searchItems" class="pl-list"></div>
+                    </div>
+                </div>
             </div>
 
             <!-- QUEUE -->
@@ -183,9 +194,43 @@
             <div id="historyView" class="view-section hidden">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:30px;">
                     <h2 style="font-size:24px;">Biblioteca</h2>
-                    <div style="display:flex; gap:12px;"><button class="btn-danger" onclick="clearAllDownloads()">Apagar
+                    <div style="display:flex; gap:12px; align-items:center;">
+                        <!-- Sort Controls -->
+                        <div style="display:flex; gap:6px; align-items:center; position:relative;">
+                            <button id="sortDropdownBtn" class="btn-sort" onclick="toggleSortDropdown(event)">
+                                Classificar
+                                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+                                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M6 9l6 6 6-6" />
+                                </svg>
+                            </button>
+                            <div id="sortDropdownMenu"
+                                style="display:none; position:absolute; top:100%; left:0; margin-top:6px; background:#1a1d2e; border:1px solid rgba(255,255,255,0.1); border-radius:12px; padding:6px 0; min-width:160px; z-index:50; box-shadow:0 8px 24px rgba(0,0,0,0.4);">
+                                <div class="sort-option" onclick="setSortBy('date')" data-sort="date"
+                                    style="padding:10px 16px; cursor:pointer; color:#94a3b8; font-size:14px; transition:background 0.15s; font-weight:500;">
+                                    Por data</div>
+                                <div class="sort-option" onclick="setSortBy('size')" data-sort="size"
+                                    style="padding:10px 16px; cursor:pointer; color:#94a3b8; font-size:14px; transition:background 0.15s; font-weight:500;">
+                                    Por tamanho</div>
+                                <div class="sort-option" onclick="setSortBy('name')" data-sort="name"
+                                    style="padding:10px 16px; cursor:pointer; color:#94a3b8; font-size:14px; transition:background 0.15s; font-weight:500;">
+                                    Por nome</div>
+                                <div class="sort-option" onclick="setSortBy('type')" data-sort="type"
+                                    style="padding:10px 16px; cursor:pointer; color:#94a3b8; font-size:14px; transition:background 0.15s; font-weight:500;">
+                                    Por tipo</div>
+                            </div>
+                            <button onclick="toggleSortDir()" id="sortDirBtn" class="btn-sort btn-sort-icon"
+                                title="Alternar ordem">
+                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+                                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M8 20V4 M4 8l4-4 4 4 M16 4v16 M12 16l4 4 4-4" />
+                                </svg>
+                            </button>
+                        </div>
+                        <button class="btn-danger" onclick="clearAllDownloads()">Apagar
                             Todos</button><button class="btn-primary" onclick="openDownloadsFolder()">Abrir
-                            Pasta</button></div>
+                            Pasta</button>
+                    </div>
                 </div>
                 <div id="historyList" class="list-container"></div>
             </div>
@@ -227,10 +272,11 @@
                     <div class="setting-card setting-block">
                         <div class="changelog-header">
                             <h3>Versão do Sistema</h3>
-                            <span class="version-badge">v1.0.0 STABLE</span>
+                            <span class="version-badge" id="appVersionBadge">v?.?.?</span>
                         </div>
                         <ul class="changelog-list">
-                            <li><strong>Interface Ultra-Fluida:</strong> Proteção contra travamentos, mesmo baixando arquivos
+                            <li><strong>Interface Ultra-Fluida:</strong> Proteção contra travamentos, mesmo baixando
+                                arquivos
                                 pesados ou listas grandes.</li>
                             <li><strong>Qualidade Máxima:</strong> Baixe vídeos em Full HD (1080p) e músicas (MP3) com
                                 capa do álbum automática.</li>
@@ -239,14 +285,18 @@
                             <li><strong>Monitoramento Real:</strong> Barras de progresso precisas para você saber
                                 exatamente quanto falta para acabar.</li>
                         </ul>
+                        <div style="margin-top: 25px;">
+                            <button class="btn-secondary" style="font-size: 13px; padding: 8px 16px; min-height: 36px;"
+                                onclick="window.electronAPI.checkForUpdatesManual()">Verificar Atualizações</button>
+                        </div>
                     </div>
                 </div>
 
                 <div class="license-footer">
                     <p class="license-tagline">LEG3NDY - Tecnologia além dos limites</p>
-                    <p class="license-copy">© 2025 LEG3NDY. Todos os direitos reservados.<br>Proibida a redistribuição
+                    <p class="license-copy">© 2026 LEG3NDY. Todos os direitos reservados.<br>Proibida a redistribuição
                         não autorizada.</p>
-                    <a href="https://leg3ndy.com.br/politica" target="_blank" class="legal-link">Política de
+                    <a href="https://leg3ndy.com.br/privacy-policy" target="_blank" class="legal-link">Política de
                         Privacidade</a>
                 </div>
             </div>
@@ -264,11 +314,47 @@
         </div>
     </div>
 
+    <!-- TOAST NOTIFICATION -->
+    <div id="toastNotification" class="toast-notification hidden">
+        <div class="toast-icon" id="toastIcon">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+                <path
+                    d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 15h-2v-2h2v2zm0-4h-2V7h2v6z" />
+            </svg>
+        </div>
+        <div class="toast-content" id="toastContent">Atualizando...</div>
+        <button id="toastActionBtn" class="btn-primary-mini hidden"
+            onclick="window.electronAPI.installUpdate()">Instalar Agora</button>
+    </div>
+
     <div id="customModal" class="modal-overlay hidden">
         <div class="modal-content">
             <h3 id="modalTitle">Atenção</h3>
             <p id="modalMsg">Mensagem.</p>
             <div class="modal-actions" id="modalActions"></div>
+        </div>
+    </div>
+
+    <div id="previewModal" class="modal-overlay hidden"
+        style="background: rgba(11, 13, 18, 0.5); backdrop-filter: blur(25px); -webkit-backdrop-filter: blur(25px);">
+        <div class="modal-content"
+            style="width: 80vw; max-width: 1000px; height: auto; max-height: 85vh; padding: 20px; background: #11141D; border-radius: 16px; position: relative; display: flex; flex-direction: column;">
+            <button onclick="closePreview()"
+                style="position: absolute; top: -15px; right: -15px; background: #3b82f6; border: none; width: 36px; height: 36px; border-radius: 50%; color: white; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 10px rgba(0,0,0,0.5); z-index: 100;">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round">
+                    <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
+            </button>
+            <div id="previewContainer"
+                style="width: 100%; aspect-ratio: 16/9; border-radius: 8px; overflow: hidden; background: #000; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+                <!-- iframe será injetado aqui -->
+            </div>
+            <div style="margin-top: 20px; text-align: center;">
+                <h3 id="previewTitle" style="color: white; margin: 0 0 10px 0; font-size: 18px;">Preview Title</h3>
+                <p style="color: #94a3b8; font-size: 13px; margin: 0;">Nota: Caso a prévia não carregue (Erro 150/153),
+                    ela foi bloqueada pelo autor, mas o <b>Download do arquivo</b> funcionará normalmente!</p>
+            </div>
         </div>
     </div>
 

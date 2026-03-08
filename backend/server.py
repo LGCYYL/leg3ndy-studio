@@ -11,27 +11,39 @@ import subprocess
 import yt_dlp
 import glob
 import gc
-import tempfile  # Adicionado
-import shutil    # Adicionado
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+import tempfile
+import shutil
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import Optional, List, Dict, Any
+import uvicorn
+import traceback
 
 if sys.platform.startswith('win'):
     sys.stdout.reconfigure(encoding='utf-8')
     sys.stderr.reconfigure(encoding='utf-8')
 
-app = Flask(__name__) # Corrigido
-CORS(app)
+app = FastAPI(title="LEG3NDY Studio API")
+
+CONCURRENT_DOWNLOADS = threading.Semaphore(3)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 if getattr(sys, 'frozen', False):
     BASE_DIR = os.path.dirname(sys.executable)
     PROJECT_ROOT = BASE_DIR
 else:
-    BASE_DIR = os.path.abspath(os.path.dirname(__file__)) # Corrigido
+    BASE_DIR = os.path.abspath(os.path.dirname(__file__))
     PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, '..'))
 
-# --- CORREÇÃO DE PERMISSÃO: CAMINHOS SEGUROS ---
-APP_DATA_DIR = os.path.join(os.getenv('APPDATA'), 'LEG3NDY Studio')
+APP_DATA_DIR = os.path.join(os.getenv('APPDATA', ''), 'LEG3NDY Studio')
 os.makedirs(APP_DATA_DIR, exist_ok=True)
 CACHE_DIR = os.path.join(APP_DATA_DIR, 'cache')
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -80,7 +92,7 @@ def force_delete_file(filepath):
 def _terminator_thread(target_dir, safe_name):
     time.sleep(3)
     temp_extensions = ['.part', '.ytdl', '.temp', '.tmp', '.f\d+', '.frag', '.webp', '.jpg', '.png']
-    pattern = os.path.join(target_dir, f"*{safe_name}*") # Corrigido
+    pattern = os.path.join(target_dir, f"*{safe_name}*")
     files = glob.glob(pattern)
     for f in files:
         if any(f.endswith(ext) for ext in temp_extensions) and not f.endswith(('.mp4', '.mp3')):
@@ -101,7 +113,6 @@ def sanitize_filename(s):
     return s[:80] if s else "video_download"
 
 class ConfigManager:
-    # ... (Sua classe original, sem alterações)
     def get_all(self):
         try:
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f: data = json.load(f)
@@ -109,7 +120,7 @@ class ConfigManager:
             if not os.path.exists(path): path = USER_DOWNLOADS
             return {"download_path": path, "auto_start": data.get("auto_start", False), "start_minimized": data.get("start_minimized", False), "minimize_tray": data.get("minimize_tray", True)}
         except: return {"download_path": USER_DOWNLOADS, "auto_start": False, "start_minimized": False, "minimize_tray": True}
-    def set_all(self, c):
+    def set_all(self, c: dict):
         d = self.get_all(); d.update(c)
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f: json.dump(d, f, indent=4, ensure_ascii=False); return True
     def get_path(self): return self.get_all()["download_path"]
@@ -117,7 +128,6 @@ class ConfigManager:
 config_manager = ConfigManager()
 
 class HistoryManager:
-    # ... (Sua classe original, sem alterações)
     def human_size(self, b):
         if not b: return "N/A"
         try: v = float(b)
@@ -170,7 +180,6 @@ class HistoryManager:
 history_manager = HistoryManager()
 
 class SpotifyEngine:
-    # ... (Sua classe original, sem alterações)
     def resolve_url(self, url):
         try:
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
@@ -185,14 +194,13 @@ class SpotifyEngine:
 spotify_engine = SpotifyEngine()
 
 class YouTubeEngine:
-    def __init__(self): # Corrigido
+    def __init__(self):
         self.user_agents = ['Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36']
         self.cancel_flags = set()
 
     def cancel_task(self, task_id): self.cancel_flags.add(task_id); kill_zombies()
 
     def get_progress_hook(self, task_id):
-        # ... (Sua função original, sem alterações)
         def hook(d):
             if task_id in self.cancel_flags: raise Exception("CANCELLED_BY_USER")
             if d['status'] == 'downloading':
@@ -210,33 +218,45 @@ class YouTubeEngine:
         return hook
 
     def get_opts(self, mode='full', task_id=None):
-        # AQUI ESTÁ A ÚNICA ALTERAÇÃO DE LÓGICA NESTA PARTE
         opts = {
             'quiet': True, 'no_warnings': True, 'socket_timeout': 30, 'retries': 10,
             'user_agent': random.choice(self.user_agents), 'ignoreerrors': True,
             'nocheckcertificate': True, 'writethumbnail': True, 
-            'cachedir': CACHE_DIR, 'paths': { 'home': APP_DATA_DIR }
+            'cachedir': CACHE_DIR, 'paths': { 'home': APP_DATA_DIR },
+            'js_runtimes': {'node': {}}
         }
+        cookie_path_root = os.path.join(PROJECT_ROOT, 'cookies.txt')
+        cookie_path_appdata = os.path.join(APP_DATA_DIR, 'cookies.txt')
+        if os.path.exists(cookie_path_root): opts['cookiefile'] = cookie_path_root
+        elif os.path.exists(cookie_path_appdata): opts['cookiefile'] = cookie_path_appdata
+        
         if FFMPEG_PATH: opts['ffmpeg_location'] = FFMPEG_PATH
         if task_id: opts['progress_hooks'] = [self.get_progress_hook(task_id)]
         if mode == 'playlist_scan': opts['extract_flat'] = 'in_playlist'; opts['noplaylist'] = False
         else: opts['extract_flat'] = False; opts['noplaylist'] = True
         return opts
 
-    def get_info(self, input_str):
-        # ... (Sua função original, sem alterações)
+    def get_info(self, input_str: str) -> dict:
         try:
-            clean_input = input_str.split('&t=')[0]; query = clean_input
+            clean_input = input_str.split('&t=')[0]
+            if 'v=' in clean_input and 'list=' in clean_input:
+                clean_input = clean_input.split('&list=')[0]
+            query = clean_input
             if 'open.spotify.com' in clean_input:
                 track_name = spotify_engine.resolve_url(clean_input)
                 if track_name: query = f"ytsearch1:{track_name} audio"
                 else: return {'error': 'Falha ao ler link do Spotify.'}
-            elif not clean_input.startswith('http'): query = f"ytsearch1:{clean_input}"
+            elif not clean_input.startswith('http'): query = f"ytsearch30:{clean_input}"
             try:
-                if 'ytsearch1:' in query:
+                if 'ytsearch30:' in query:
+                    with yt_dlp.YoutubeDL(self.get_opts('playlist_scan')) as ydl:
+                        info = ydl.extract_info(query, download=False)
+                        if 'entries' in info and len(info['entries']) > 0: return self.parse_search_results(info)
+                        else: return {'error': 'Nenhum resultado.'}
+                elif 'ytsearch1:' in query:
                     with yt_dlp.YoutubeDL(self.get_opts('video_full')) as ydl:
                         info = ydl.extract_info(query, download=False)
-                        if 'entries' in info and len(info['entries']) > 0: return self.parse_video(info['entries'][0])
+                        if info and 'entries' in info and len(info['entries']) > 0 and info['entries'][0]: return self.parse_video(info['entries'][0])
                         else: return {'error': 'Nenhum resultado.'}
                 elif 'list=' in query:
                     with yt_dlp.YoutubeDL(self.get_opts('playlist_scan')) as ydl:
@@ -246,13 +266,31 @@ class YouTubeEngine:
                 else: return self.process_single_video(query)
             except yt_dlp.utils.DownloadError as de: return {'error': f'Erro no YouTube: {str(de)[:100]}...'}
         except Exception as e: return {'error': f"Erro: {str(e)}"}
+        
+    def parse_search_results(self, info):
+        entries = []
+        for entry in info.get('entries', []):
+            if entry:
+                entries.append({'id': entry.get('id'), 'title': entry.get('title', 'Sem título'), 'duration': entry.get('duration'), 'thumbnail': (entry.get('thumbnails', [{}]) or [{}])[0].get('url'), 'uploader': entry.get('uploader')})
+        return {'type': 'search_results', 'query': info.get('id', ''), 'entries': entries}
+        
     def process_single_video(self, url):
-        # ... (Sua função original, sem alterações)
         with yt_dlp.YoutubeDL(self.get_opts('video_full')) as ydl_full:
-            info_full = ydl_full.extract_info(url, download=False)
+            info_full = None
+            try: info_full = ydl_full.extract_info(url, download=False)
+            except: pass
+            
+            if not info_full:
+                opts_fallback = self.get_opts('video_full')
+                opts_fallback['extractor_args'] = {'youtube': {'player_client': ['android']}}
+                with yt_dlp.YoutubeDL(opts_fallback) as ydl_fb:
+                    try: info_full = ydl_fb.extract_info(url, download=False)
+                    except: pass
+                    
+            if not info_full: return {'error': 'Não foi possível extrair os dados. O vídeo pode ser privado, restrito ou inválido.'}
             return self.parse_video(info_full)
+            
     def parse_playlist(self, info):
-        # ... (Sua função original, sem alterações)
         entries = []; limit = 1000; count = 0
         raw_entries = info.get('entries')
         if raw_entries is None:
@@ -263,8 +301,9 @@ class YouTubeEngine:
                 entries.append({'id': entry.get('id'), 'title': entry.get('title', 'Sem título'), 'duration': entry.get('duration'), 'thumbnail': (entry.get('thumbnails', [{}]) or [{}])[0].get('url'), 'uploader': entry.get('uploader')})
                 count += 1
         return {'type': 'playlist', 'id': info.get('id'), 'title': info.get('title'), 'count': len(entries), 'entries': entries}
+        
     def parse_video(self, info):
-        # ... (Sua função original, sem alterações)
+        if not info: return {'error': 'Dados do vídeo corrompidos ou bloqueados.'}
         v_fmts, a_fmts = [], []; dur = info.get('duration') or 0; seen = set()
         for f in info.get('formats', []):
             if f.get('height') and 144 <= f['height'] <= 1080 and f['height'] not in seen:
@@ -280,115 +319,291 @@ class YouTubeEngine:
                     a_fmts.append({'format_id': f['format_id'], 'quality': f"{abr}kbps", 'filesize': history_manager.human_size(filesize), 'filesize_bytes': int(filesize), 'type': 'audio'})
         v_fmts.sort(key=lambda x: int(x['quality'][:-1]) if 'p' in x['quality'] else 0, reverse=True)
         a_fmts.sort(key=lambda x: int(x['quality'][:-4]) if 'kbps' in x['quality'] else 0, reverse=True)
-        if not v_fmts: v_fmts.append({'format_id': 'bestvideo', 'quality': 'Auto', 'filesize': 'N/A', 'filesize_bytes': 0, 'type': 'video'})
-        if not a_fmts: a_fmts.append({'format_id': 'bestaudio', 'quality': 'Auto', 'filesize': 'N/A', 'filesize_bytes': 0, 'type': 'audio'})
+        
+        if not v_fmts: 
+            v_fmts.append({'format_id': 'bestvideo', 'quality': 'Auto', 'filesize': 'N/A', 'filesize_bytes': 0, 'type': 'video'})
+            
+        if not a_fmts or len(a_fmts) == 0: 
+            size_320 = history_manager.human_size((320 * 1000 / 8) * dur) if dur > 0 else 'N/A'
+            size_192 = history_manager.human_size((192 * 1000 / 8) * dur) if dur > 0 else 'N/A'
+            size_128 = history_manager.human_size((128 * 1000 / 8) * dur) if dur > 0 else 'N/A'
+            a_fmts = [
+                {'format_id': 'bestaudio/best', 'quality': '320kbps', 'filesize': size_320, 'filesize_bytes': int((320 * 1000 / 8) * dur), 'type': 'audio'},
+                {'format_id': 'bestaudio/best', 'quality': '192kbps', 'filesize': size_192, 'filesize_bytes': int((192 * 1000 / 8) * dur), 'type': 'audio'},
+                {'format_id': 'bestaudio/best', 'quality': '128kbps', 'filesize': size_128, 'filesize_bytes': int((128 * 1000 / 8) * dur), 'type': 'audio'}
+            ]
+            
         return {'type': 'video', 'id': info['id'], 'title': info.get('title'), 'thumbnail': info.get('thumbnail'), 'duration': info.get('duration_string'), 'author': info.get('uploader'), 'formats_video': v_fmts[:8], 'formats_audio': a_fmts[:4]}
 
-    def run_download_thread(self, task_id, url, fmt_id, mode, title, qual, custom_path):
-        # AQUI ESTÁ A SEGUNDA ALTERAÇÃO DE LÓGICA: DOWNLOAD-PARA-TEMP
-        safe = sanitize_filename(title)
-        temp_dir = tempfile.gettempdir()
-        temp_filename_base = f"{safe}-{task_id}" # Nome único para o arquivo temporário
-        try:
-            final_target_dir = custom_path or config_manager.get_path()
-            os.makedirs(final_target_dir, exist_ok=True)
-            opts = self.get_opts('video_full', task_id)
-            
-            # Força o download a acontecer na pasta TEMP
-            opts['outtmpl'] = os.path.join(temp_dir, f"{temp_filename_base}.%(ext)s")
-            
-            ext = 'mp3'
-            if mode == 'audio':
-                opts['format'] = 'bestaudio/best'
-                clean_qual = ''.join(filter(str.isdigit, qual)) or '192'
-                opts['postprocessors'] = [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': clean_qual}, {'key': 'EmbedThumbnail'}, {'key': 'FFmpegMetadata'}]
-            else: # video
-                ext = 'mp4'
-                if '1080' in qual: opts['format'] = 'bestvideo[height=1080]+bestaudio/bestvideo[height<=1080]+bestaudio/best'
-                elif '720' in qual: opts['format'] = 'bestvideo[height=720]+bestaudio/bestvideo[height<=720]+bestaudio/best'
-                else: opts['format'] = f"bestvideo[height<=1080]+bestaudio/best"
-                opts['merge_output_format'] = 'mp4'
-                opts['postprocessor_args'] = {'merger': ['-c:v', 'copy', '-c:a', 'aac']}
-                opts['postprocessors'] = [{'key': 'EmbedThumbnail'}, {'key': 'FFmpegMetadata'}]
-            
-            opts['overwrites'] = True
-            with yt_dlp.YoutubeDL(opts) as ydl: ydl.download([url])
-            
-            temp_filepath = os.path.join(temp_dir, f"{temp_filename_base}.{ext}")
-            if not os.path.exists(temp_filepath):
-                raise FileNotFoundError(f"Arquivo temporário não encontrado: {temp_filepath}")
-            
-            final_filename = f"{safe} [{qual}].{ext}"
-            final_filepath = os.path.join(final_target_dir, final_filename)
-            
-            shutil.move(temp_filepath, final_filepath)
-            
-            if os.path.exists(final_filepath):
-                update_state(task_id, 'success', 100, final_filepath)
-                history_manager.add({'title': title, 'type': mode, 'quality': qual, 'path': final_filepath, 'filename': final_filename})
-            else:
-                raise IOError("Falha ao mover o arquivo para o destino final.")
-        except Exception as e:
-            update_state(task_id, 'error', 0, str(e))
-        finally:
-            cleanup_after_download(temp_dir, temp_filename_base)
+    def run_download_thread(self, task_id: str, url: str, fmt_id: str, mode: str, title: str, qual: str, custom_path: str):
+        update_state(task_id, 'pending', 0, "Aguardando fila...")
+        with CONCURRENT_DOWNLOADS:
+            update_state(task_id, 'starting', 0, "Iniciando processo...")
+            safe = sanitize_filename(title)
+            temp_dir = tempfile.gettempdir()
+            temp_filename_base = f"{safe}-{task_id}" 
+            try:
+                final_target_dir = custom_path or config_manager.get_path()
+                os.makedirs(final_target_dir, exist_ok=True)
+                opts = self.get_opts('video_full', task_id)
+                opts['outtmpl'] = os.path.join(temp_dir, f"{temp_filename_base}.%(ext)s")
+                
+                ext = 'mp3'
+                if mode == 'audio':
+                    opts['format'] = 'bestaudio/best'
+                    clean_qual = ''.join(filter(str.isdigit, qual)) or '192'
+                    opts['postprocessors'] = [
+                        {'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': clean_qual},
+                        {'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'},
+                        {'key': 'EmbedThumbnail'}, 
+                        {'key': 'FFmpegMetadata'}
+                    ]
+                else:
+                    ext = 'mp4'
+                    if '1080' in qual: opts['format'] = 'bestvideo[height=1080]+bestaudio/bestvideo[height<=1080]+bestaudio/best'
+                    elif '720' in qual: opts['format'] = 'bestvideo[height=720]+bestaudio/bestvideo[height<=720]+bestaudio/best'
+                    else: opts['format'] = f"bestvideo[height<=1080]+bestaudio/best"
+                    opts['merge_output_format'] = 'mp4'
+                    opts['postprocessor_args'] = {'merger': ['-c:v', 'copy', '-c:a', 'aac']}
+                    opts['postprocessors'] = [
+                        {'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'},
+                        {'key': 'EmbedThumbnail'}, 
+                        {'key': 'FFmpegMetadata'}
+                    ]
+                
+                opts['overwrites'] = True
+                try: 
+                    with yt_dlp.YoutubeDL(opts) as ydl: ydl.download([url])
+                except:
+                    opts['extractor_args'] = {'youtube': {'player_client': ['android']}}
+                    with yt_dlp.YoutubeDL(opts) as ydl: ydl.download([url])
+
+                
+                temp_filepath = os.path.join(temp_dir, f"{temp_filename_base}.{ext}")
+                if not os.path.exists(temp_filepath):
+                    raise FileNotFoundError(f"Arquivo temporário não encontrado: {temp_filepath}")
+                
+                final_filename = f"{safe} [{qual}].{ext}"
+                final_filepath = os.path.join(final_target_dir, final_filename)
+                
+                shutil.move(temp_filepath, final_filepath)
+                
+                if os.path.exists(final_filepath):
+                    update_state(task_id, 'success', 100, final_filepath)
+                    history_manager.add({'title': title, 'type': mode, 'quality': qual, 'path': final_filepath, 'filename': final_filename})
+                else:
+                    raise IOError("Falha ao mover o arquivo")
+            except Exception as e:
+                err_str = str(e)
+                if len(err_str) > 200: err_str = err_str[:200] + "..."
+                trace = traceback.format_exc(limit=1)
+                update_state(task_id, 'error', 0, f"Erro: {err_str}")
+                print(f"[{task_id}] EXCEPTION:\n{trace}")
+            finally:
+                if task_id in self.cancel_flags: self.cancel_flags.remove(task_id)
+                cleanup_after_download(temp_dir, temp_filename_base)
 
 engine = YouTubeEngine()
 
-@app.route('/api/info', methods=['POST'])
-def r_info(): return jsonify(engine.get_info(request.json.get('url')))
+# Pydantic Schemas
+class InfoRequest(BaseModel):
+    url: str
 
-@app.route('/api/download', methods=['POST'])
-def r_dl():
-    d = request.json
-    video_id = d.get('vidId') or d.get('id')
-    if not video_id: return jsonify({'error': 'ID do vídeo não fornecido'}), 400
+class DownloadRequest(BaseModel):
+    vidId: Optional[str] = None
+    id: Optional[str] = None
+    title: Optional[str] = None
+    format_id: Optional[str] = None
+    mode: Optional[str] = None
+    quality: Optional[str] = None
+    downloadPath: Optional[str] = None
+
+class ActionRequest(BaseModel):
+    id: Optional[str] = None
+    ids: Optional[List[str]] = None
+    filename: Optional[str] = None
+
+class ConfigRequest(BaseModel):
+    download_path: Optional[str] = None
+    auto_start: Optional[bool] = None
+    start_minimized: Optional[bool] = None
+    minimize_tray: Optional[bool] = None
+
+@app.post("/api/info")
+def r_info(req: InfoRequest): 
+    return engine.get_info(req.url)
+
+@app.post("/api/download")
+def r_dl(req: DownloadRequest, background_tasks: BackgroundTasks):
+    video_id = req.vidId or req.id
+    if not video_id: 
+        raise HTTPException(status_code=400, detail="ID do vídeo não fornecido")
     
     task_id = f"{video_id}-{random.randint(1000, 9999)}"
     download_states[task_id] = {'status': 'downloading', 'percent': 0, 'msg': 'Iniciando...'}
     
-    args = (task_id, f"https://www.youtube.com/watch?v={video_id}", d.get('format_id'), d.get('mode'), d.get('title'), d.get('quality'), d.get('downloadPath'))
-    
-    t = threading.Thread(target=engine.run_download_thread, args=args)
-    t.start()
-    return jsonify({'status': 'started', 'task_id': task_id})
+    background_tasks.add_task(
+        engine.run_download_thread, 
+        task_id, 
+        f"https://www.youtube.com/watch?v={video_id}", 
+        req.format_id or '', 
+        req.mode or 'video', 
+        req.title or 'Unknown', 
+        req.quality or 'Auto', 
+        req.downloadPath or ''
+    )
+    return {'status': 'started', 'task_id': task_id}
 
-@app.route('/api/status/<task_id>', methods=['GET'])
-def r_status(task_id): return jsonify(download_states.get(task_id, {'status': 'unknown', 'percent': 0}))
+@app.get("/api/status/{task_id}")
+def r_status(task_id: str): 
+    return download_states.get(task_id, {'status': 'unknown', 'percent': 0})
 
-# ... (O resto das rotas, sem alterações)
-@app.route('/api/cancel', methods=['POST'])
+@app.post("/api/cancel")
 def r_cancel():
     kill_zombies()
     for tid, state in list(download_states.items()):
         if state['status'] == 'downloading':
             engine.cancel_task(tid); state['status'] = 'cancelled'
-    return jsonify({'status': 'ok'})
-@app.route('/api/history', methods=['GET'])
-def r_hist(): return jsonify(history_manager.get_all())
-@app.route('/api/delete', methods=['POST'])
-def r_del(): return jsonify({'status': 'ok'}) if history_manager.delete(request.json.get('id')) else jsonify({'error': 'Erro'})
-@app.route('/api/clear-all', methods=['POST'])
-def r_clear(): return jsonify({'status': 'ok'}) if history_manager.clear_all() else jsonify({'error': 'Erro'})
-@app.route('/api/config', methods=['GET', 'POST'])
-def r_conf():
-    if request.method == 'POST':
-        if config_manager.set_all(request.json): return jsonify({'status': 'ok'})
-        return jsonify({'error': 'Erro'})
-    return jsonify(config_manager.get_all())
-@app.route('/api/config/reset', methods=['POST'])
-def r_reset(): return jsonify({'status': 'ok', 'path': config_manager.reset_path()})
-@app.route('/api/open-folder', methods=['POST'])
+    return {'status': 'ok'}
+
+@app.get("/api/preview")
+def r_preview(id: str):
+    try:
+        opts = engine.get_opts('info', 'preview')
+        opts['format'] = 'best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best'
+        opts['extractor_args'] = {'youtube': {'player_client': ['android']}}
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(id, download=False)
+        except:
+            opts.pop('extractor_args', None)
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(id, download=False)
+                
+        url = info.get('url')
+        if not url:
+            for f in info.get('formats', []):
+                if f.get('vcodec') != 'none' and f.get('acodec') != 'none':
+                    url = f.get('url')
+                    break
+        return {'url': url}
+    except Exception as e:
+        return {'error': str(e)}
+
+@app.get("/api/history")
+def r_hist(): 
+    return history_manager.get_all()
+
+@app.get("/api/library")
+def r_library():
+    try:
+        base_path = config_manager.get_path()
+        if not os.path.exists(base_path): return []
+        
+        hist = history_manager.get_all()
+        hist_map = {h['filename']: h for h in hist if 'filename' in h}
+        
+        library_items = []
+        for f in os.listdir(base_path):
+            if f.endswith('.mp4') or f.endswith('.mp3'):
+                full_path = os.path.join(base_path, f)
+                size_bytes = os.path.getsize(full_path)
+                
+                item = {
+                    'id': str(hash(f)),
+                    'title': f.rsplit('.', 1)[0],
+                    'path': full_path,
+                    'filename': f,
+                    'size': history_manager.human_size(size_bytes),
+                    'size_bytes': size_bytes,
+                    'type': 'video' if f.endswith('.mp4') else 'audio',
+                    'mtime': os.path.getmtime(full_path)
+                }
+                
+                # Enriquecer com dados do histórico se disponível (como a thumbnail e qualidade original)
+                if f in hist_map:
+                    item['title'] = hist_map[f].get('title', item['title'])
+                    item['thumbnail'] = hist_map[f].get('thumbnail', '')
+                    item['quality'] = hist_map[f].get('quality', '')
+                    
+                library_items.append(item)
+                
+        # Ordenar por data de modificação (mais novos primeiro)
+        library_items.sort(key=lambda x: x['mtime'], reverse=True)
+        return library_items
+    except Exception as e:
+        print(f"Error scanning library: {e}")
+        return []
+
+@app.post("/api/delete")
+def r_del(req: ActionRequest):
+    phys_deleted = False
+    if req.filename:
+        try:
+            base_path = config_manager.get_path()
+            safe_filename = os.path.basename(req.filename)
+            full_path = os.path.join(base_path, safe_filename)
+            if os.path.exists(full_path):
+                os.remove(full_path)
+                phys_deleted = True
+        except Exception as e:
+            print(f"Error removing file physically: {e}")
+            
+    hist_deleted = history_manager.delete(req.id)
+    if phys_deleted or hist_deleted:
+        return {'status': 'ok'}
+    return {'error': 'Erro na exclusão do arquitvo'}
+
+@app.post("/api/clear-all")
+def r_clear(): 
+    try:
+        base_path = config_manager.get_path()
+        hist = history_manager.get_all()
+        for h in hist:
+            if 'filename' in h:
+                safe_filename = os.path.basename(h['filename'])
+                full_path = os.path.join(base_path, safe_filename)
+                if os.path.exists(full_path):
+                    os.remove(full_path)
+    except Exception as e:
+        print(f"Error clearing physical library: {e}")
+        
+    if history_manager.clear_all():
+        return {'status': 'ok'}
+    return {'error': 'Erro ao limpar banco de dados'}
+
+@app.get("/api/config")
+def r_get_conf():
+    return config_manager.get_all()
+
+@app.post("/api/config")
+async def r_post_conf(request: Request):
+    try:
+        data = await request.json()
+        if config_manager.set_all(data):
+            return {'status': 'ok'}
+    except Exception:
+        pass
+    return {'error': 'Erro'}
+
+@app.post("/api/config/reset")
+def r_reset(): 
+    return {'status': 'ok', 'path': config_manager.reset_path()}
+
+@app.post("/api/open-folder")
 def r_open():
     p = config_manager.get_path()
     if sys.platform == 'win32': os.startfile(p)
     else: subprocess.Popen(['xdg-open', p])
-    return jsonify({'status': 'ok'})
-@app.route('/api/revalidate-history', methods=['POST'])
-def r_reval(): return jsonify({'status': 'ok', 'history': history_manager.revalidate_history()})
-@app.route('/api/app-info', methods=['GET'])
-def r_appinfo(): return jsonify({"version": "1.2.0 1080p-Stable", "engine": "LEG3NDY Core"})
+    return {'status': 'ok'}
+
+@app.post("/api/revalidate-history")
+def r_reval(): 
+    return {'status': 'ok', 'history': history_manager.revalidate_history()}
+
+@app.get("/api/app-info")
+def r_appinfo(): 
+    return {"version": "1.2.0 1080p-Stable", "engine": "LEG3NDY Core"}
 
 if __name__ == '__main__':
-    from waitress import serve
-    serve(app, host='127.0.0.1', port=5000, threads=12)
+    uvicorn.run(app, host='127.0.0.1', port=5000, log_level="info")
