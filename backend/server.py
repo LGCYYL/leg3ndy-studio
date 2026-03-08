@@ -638,5 +638,18 @@ def r_reval():
 def r_appinfo(): 
     return {"version": "1.2.0 1080p-Stable", "engine": "LEG3NDY Core"}
 
+@app.get("/api/debug")
+def r_debug():
+    return {
+        "frozen": getattr(sys, 'frozen', False),
+        "sys_executable": sys.executable,
+        "base_dir": BASE_DIR,
+        "node_path": NODE_PATH,
+        "node_exists": os.path.exists(NODE_PATH) if NODE_PATH else False,
+        "ffmpeg_path": FFMPEG_PATH,
+        "cwd": os.getcwd(),
+        "files_in_exe_dir": os.listdir(os.path.dirname(sys.executable)) if getattr(sys, 'frozen', False) else None
+    }
+
 if __name__ == '__main__':
     uvicorn.run(app, host='127.0.0.1', port=5000, log_level="info")
