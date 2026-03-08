@@ -1,6 +1,8 @@
 node_modules/
 venv/
 dist_electron/
+dist/
+build/
 cookies.txt
 .env
 __pycache__/

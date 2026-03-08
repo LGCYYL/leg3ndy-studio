@@ -229,7 +229,7 @@ class YouTubeEngine:
             'user_agent': random.choice(self.user_agents), 'ignoreerrors': True,
             'nocheckcertificate': True, 'writethumbnail': True, 
             'cachedir': CACHE_DIR, 'paths': { 'home': APP_DATA_DIR },
-            'js_runtimes': {'node': {}}
+            'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
         }
         cookie_path_root = os.path.join(PROJECT_ROOT, 'cookies.txt')
         cookie_path_appdata = os.path.join(APP_DATA_DIR, 'cookies.txt')

@@ -15,17 +15,10 @@ RequestExecutionLevel admin
   ; Espera o Windows respirar
   Sleep 2000
 
-  ; 2. LIMPEZA DO APPDATA (Configs e Histórico)
-  ; SetShellVarContext all garante que olhemos para todos os usuários se foi instalado perMachine
-  SetShellVarContext all
-  DetailPrint "Removendo configurações..."
-  RMDir /r /REBOOTOK "$APPDATA\LEG3NDY Studio"
-  
-  ; Também checa no usuário atual por garantia
-  SetShellVarContext current
-  RMDir /r /REBOOTOK "$APPDATA\LEG3NDY Studio"
+  ; NÃO apagar o AppData durante desinstalação/atualização!
+  ; As configs e o histórico do usuário devem persistir entre versões.
 
-  ; 3. LIMPEZA DA PASTA DE INSTALAÇÃO
+  ; LIMPEZA DA PASTA DE INSTALAÇÃO
   ; O $INSTDIR é a pasta onde foi instalado. O comando /r apaga tudo recursivamente.
   DetailPrint "Removendo arquivos do sistema..."
   
