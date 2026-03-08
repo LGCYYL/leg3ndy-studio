@@ -32,6 +32,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build Python Engine
+        run: |
+          pyinstaller leg3ndy-engine.spec
+          New-Item -ItemType Directory -Force -Path resources_build
+          Copy-Item dist\leg3ndy-engine.exe resources_build\leg3ndy-engine.exe
 
       - name: Build and Publish Release
         env:
