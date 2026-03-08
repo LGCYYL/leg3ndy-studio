@@ -73,7 +73,7 @@ FFMPEG_PATH = get_ffmpeg_path()
 def get_node_path():
     # Em produção (frozen), node.exe está no mesmo dir do exe (resources/engine/)
     if getattr(sys, 'frozen', False):
-        bundled = os.path.join(BASE_DIR, 'node.exe')
+        bundled = os.path.join(os.path.dirname(sys.executable), 'node.exe')
         if os.path.exists(bundled): return bundled
     # Fallback: PATH do sistema e locais comuns do Windows
     import shutil
