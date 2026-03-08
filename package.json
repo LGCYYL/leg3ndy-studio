@@ -1,6 +1,6 @@
 {
   "name": "leg3ndy-studio",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "description": "LEG3NDY Downloader Studio",
   "main": "main.js",
   "author": "LEG3NDY Tech",
@@ -67,6 +67,10 @@
       {
         "from": "resources_build/ffmpeg.exe",
         "to": "engine/ffmpeg.exe"
+      },
+      {
+        "from": "resources_build/node.exe",
+        "to": "engine/node.exe"
       },
       {
         "from": "icon-app.png",

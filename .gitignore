@@ -9,3 +9,6 @@ __pycache__/
 *.pyc
 .DS_Store
 resources_build/leg3ndy-engine.exe
+resources_build/ffmpeg.exe
+resources_build/node.exe
+backend/bgutil-provider/

@@ -70,6 +70,27 @@ def get_ffmpeg_path():
     return None
 FFMPEG_PATH = get_ffmpeg_path()
 
+def get_node_path():
+    # Em produção (frozen), node.exe está no mesmo dir do exe (resources/engine/)
+    if getattr(sys, 'frozen', False):
+        bundled = os.path.join(BASE_DIR, 'node.exe')
+        if os.path.exists(bundled): return bundled
+    # Fallback: PATH do sistema e locais comuns do Windows
+    import shutil
+    node = shutil.which('node')
+    if node: return node
+    common_paths = [
+        os.path.join(os.environ.get('ProgramFiles', 'C:\\Program Files'), 'nodejs', 'node.exe'),
+        os.path.join(os.environ.get('ProgramFiles(x86)', 'C:\\Program Files (x86)'), 'nodejs', 'node.exe'),
+        os.path.join(os.environ.get('APPDATA', ''), 'nvm', 'current', 'node.exe'),
+        os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Programs', 'node', 'node.exe'),
+    ]
+    for p in common_paths:
+        if p and os.path.exists(p): return p
+    return None
+NODE_PATH = get_node_path()
+
+
 if not os.path.exists(HISTORY_FILE):
     with open(HISTORY_FILE, 'w', encoding='utf-8') as f: json.dump([], f, ensure_ascii=False)
 if not os.path.exists(CONFIG_FILE):
@@ -229,7 +250,7 @@ class YouTubeEngine:
             'user_agent': random.choice(self.user_agents), 'ignoreerrors': True,
             'nocheckcertificate': True, 'writethumbnail': True, 
             'cachedir': CACHE_DIR, 'paths': { 'home': APP_DATA_DIR },
-            'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
+            'js_runtimes': {'node': {'path': NODE_PATH}} if NODE_PATH else {'node': {}},
         }
         cookie_path_root = os.path.join(PROJECT_ROOT, 'cookies.txt')
         cookie_path_appdata = os.path.join(APP_DATA_DIR, 'cookies.txt')
@@ -281,24 +302,26 @@ class YouTubeEngine:
         return {'type': 'search_results', 'query': info.get('id', ''), 'entries': entries}
         
     def process_single_video(self, url):
+        info_full = None
+        
+        # Tenta primeiro sem forçar player_client (yt-dlp default) - retorna todos os formatos
         with yt_dlp.YoutubeDL(self.get_opts('video_full')) as ydl_full:
-            info_full = None
             try: info_full = ydl_full.extract_info(url, download=False)
             except: pass
             
-            # Use fallback se não carregou ou se os formatos vieram censurados (ex: apenas 1 formato 360p de age-gate)
-            if not info_full or len(info_full.get('formats', [])) <= 5:
-                opts_fallback = self.get_opts('video_full')
-                opts_fallback['extractor_args'] = {'youtube': {'player_client': ['android', 'web']}}
-                with yt_dlp.YoutubeDL(opts_fallback) as ydl_fb:
-                    try: 
-                        info_fb = ydl_fb.extract_info(url, download=False)
-                        if info_fb and len(info_fb.get('formats', [])) > len((info_full or {}).get('formats', [])):
-                            info_full = info_fb
-                    except: pass
+        # Fallback com android+web para conteúdo restrito/age-gate que o default não consegue
+        if not info_full or len(info_full.get('formats', [])) <= 5:
+            opts_fallback = self.get_opts('video_full')
+            opts_fallback['extractor_args'] = {'youtube': {'player_client': ['android', 'web']}}
+            with yt_dlp.YoutubeDL(opts_fallback) as ydl_fb:
+                try: 
+                    info_fb = ydl_fb.extract_info(url, download=False)
+                    if info_fb and len(info_fb.get('formats', [])) > len((info_full or {}).get('formats', [])):
+                        info_full = info_fb
+                except: pass
                     
-            if not info_full: return {'error': 'Não foi possível extrair os dados. O vídeo pode ser privado, restrito ou inválido.'}
-            return self.parse_video(info_full)
+        if not info_full: return {'error': 'Não foi possível extrair os dados. O vídeo pode ser privado, restrito ou inválido.'}
+        return self.parse_video(info_full)
             
     def parse_playlist(self, info):
         entries = []; limit = 1000; count = 0
