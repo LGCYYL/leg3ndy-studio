@@ -165,23 +165,31 @@ function writeConfig(updates) {
     }
     catch (e) { }
 }
+let isManualUpdateCheck = false;
 function setupAutoUpdater() {
     electron_updater_1.autoUpdater.autoDownload = true;
     electron_updater_1.autoUpdater.autoInstallOnAppQuit = true;
     electron_updater_1.autoUpdater.on('checking-for-update', () => {
         if (mainWindow)
-            mainWindow.webContents.send('update-event', { type: 'checking' });
+            mainWindow.webContents.send('update-event', { type: 'checking', manual: isManualUpdateCheck });
     });
     electron_updater_1.autoUpdater.on('update-available', (info) => {
         if (mainWindow)
             mainWindow.webContents.send('update-event', { type: 'available', info });
+        isManualUpdateCheck = false;
     });
     electron_updater_1.autoUpdater.on('update-not-available', (info) => {
-        // Silencioso se não houver update
+        if (mainWindow) {
+            // Silencioso se não houver update e foi auto. Se manual, avisa:
+            if (isManualUpdateCheck)
+                mainWindow.webContents.send('update-event', { type: 'not-available' });
+        }
+        isManualUpdateCheck = false;
     });
     electron_updater_1.autoUpdater.on('error', (err) => {
         if (mainWindow)
-            mainWindow.webContents.send('update-event', { type: 'error', error: err.message });
+            mainWindow.webContents.send('update-event', { type: 'error', error: err.message, manual: isManualUpdateCheck });
+        isManualUpdateCheck = false;
     });
     electron_updater_1.autoUpdater.on('download-progress', (progressObj) => {
         if (mainWindow)
@@ -201,12 +209,13 @@ function setupAutoUpdater() {
 // Inicializamos o watcher do frontend via foco da janela, não precisamos mais disso:
 // ipcMain.on('config-download-path-changed', (e, newPath: string) => startDownloadFolderWatcher());
 electron_1.ipcMain.on('check-for-updates-manual', () => {
+    isManualUpdateCheck = true;
     if (!electron_1.app.isPackaged && mainWindow) {
         // Modo Dev: O electron-updater ignora a verificação se o app não estiver empacotado.
         // Simulando fluxo visual para testes locais.
-        mainWindow.webContents.send('update-event', { type: 'checking' });
+        mainWindow.webContents.send('update-event', { type: 'checking', manual: true });
         setTimeout(() => {
-            mainWindow?.webContents.send('update-event', { type: 'error', error: 'Modo de Desenvolvimento (Atualização pulada)' });
+            mainWindow?.webContents.send('update-event', { type: 'error', error: 'Modo de Desenvolvimento (Atualização pulada)', manual: true });
         }, 2000);
         return;
     }

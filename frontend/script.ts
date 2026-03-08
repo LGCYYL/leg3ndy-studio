@@ -61,13 +61,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (window.electronAPI && window.electronAPI.onUpdateEvent) {
         window.electronAPI.onUpdateEvent((evt: any) => {
             if (evt.type === 'checking') {
-                showToast('Buscando atualizações...', false, false, 'loading');
+                if (evt.manual) showToast('Buscando atualizações...', false, false, 'loading');
             } else if (evt.type === 'available') {
                 showToast(`Nova versão (${evt.info.version}) encontrada. Baixando...`, true, false, 'loading');
+            } else if (evt.type === 'not-available') {
+                showToast('Você já possui a versão mais recente.', true, false, 'info');
             } else if (evt.type === 'downloaded') {
                 showToast(`Versão ${evt.version} pronta para instalar.`, true, true, 'success');
             } else if (evt.type === 'error') {
-                showToast(`${evt.error}`, false, false, 'error');
+                if (evt.manual) showToast(`${evt.error}`, false, false, 'error');
+                else console.error("AutoUpdate Error:", evt.error);
             } else if (evt.type === 'progress') {
                 showToast(`Baixando atualização (${Math.round(evt.percent)}%)...`, true, false, 'loading');
             }

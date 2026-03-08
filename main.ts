@@ -139,24 +139,32 @@ function writeConfig(updates: any) {
     } catch (e) { }
 }
 
+let isManualUpdateCheck = false;
+
 function setupAutoUpdater() {
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
 
     autoUpdater.on('checking-for-update', () => {
-        if (mainWindow) mainWindow.webContents.send('update-event', { type: 'checking' });
+        if (mainWindow) mainWindow.webContents.send('update-event', { type: 'checking', manual: isManualUpdateCheck });
     });
 
     autoUpdater.on('update-available', (info) => {
         if (mainWindow) mainWindow.webContents.send('update-event', { type: 'available', info });
+        isManualUpdateCheck = false;
     });
 
     autoUpdater.on('update-not-available', (info) => {
-        // Silencioso se não houver update
+        if (mainWindow) {
+            // Silencioso se não houver update e foi auto. Se manual, avisa:
+            if (isManualUpdateCheck) mainWindow.webContents.send('update-event', { type: 'not-available' });
+        }
+        isManualUpdateCheck = false;
     });
 
     autoUpdater.on('error', (err) => {
-        if (mainWindow) mainWindow.webContents.send('update-event', { type: 'error', error: err.message });
+        if (mainWindow) mainWindow.webContents.send('update-event', { type: 'error', error: err.message, manual: isManualUpdateCheck });
+        isManualUpdateCheck = false;
     });
 
     autoUpdater.on('download-progress', (progressObj) => {
@@ -180,12 +188,13 @@ function setupAutoUpdater() {
 // ipcMain.on('config-download-path-changed', (e, newPath: string) => startDownloadFolderWatcher());
 
 ipcMain.on('check-for-updates-manual', () => {
+    isManualUpdateCheck = true;
     if (!app.isPackaged && mainWindow) {
         // Modo Dev: O electron-updater ignora a verificação se o app não estiver empacotado.
         // Simulando fluxo visual para testes locais.
-        mainWindow.webContents.send('update-event', { type: 'checking' });
+        mainWindow.webContents.send('update-event', { type: 'checking', manual: true });
         setTimeout(() => {
-            mainWindow?.webContents.send('update-event', { type: 'error', error: 'Modo de Desenvolvimento (Atualização pulada)' });
+            mainWindow?.webContents.send('update-event', { type: 'error', error: 'Modo de Desenvolvimento (Atualização pulada)', manual: true });
         }, 2000);
         return;
     }

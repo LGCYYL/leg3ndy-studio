@@ -280,11 +280,15 @@ class YouTubeEngine:
             try: info_full = ydl_full.extract_info(url, download=False)
             except: pass
             
-            if not info_full:
+            # Use fallback se não carregou ou se os formatos vieram censurados (ex: apenas 1 formato 360p de age-gate)
+            if not info_full or len(info_full.get('formats', [])) <= 5:
                 opts_fallback = self.get_opts('video_full')
-                opts_fallback['extractor_args'] = {'youtube': {'player_client': ['android']}}
+                opts_fallback['extractor_args'] = {'youtube': {'player_client': ['android', 'web']}}
                 with yt_dlp.YoutubeDL(opts_fallback) as ydl_fb:
-                    try: info_full = ydl_fb.extract_info(url, download=False)
+                    try: 
+                        info_fb = ydl_fb.extract_info(url, download=False)
+                        if info_fb and len(info_fb.get('formats', [])) > len((info_full or {}).get('formats', [])):
+                            info_full = info_fb
                     except: pass
                     
             if not info_full: return {'error': 'Não foi possível extrair os dados. O vídeo pode ser privado, restrito ou inválido.'}
@@ -375,7 +379,7 @@ class YouTubeEngine:
                 try: 
                     with yt_dlp.YoutubeDL(opts) as ydl: ydl.download([url])
                 except:
-                    opts['extractor_args'] = {'youtube': {'player_client': ['android']}}
+                    opts['extractor_args'] = {'youtube': {'player_client': ['android', 'web']}}
                     with yt_dlp.YoutubeDL(opts) as ydl: ydl.download([url])
 
                 
