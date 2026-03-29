@@ -10,7 +10,26 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            runner_name: windows
+            release_script: npm run dist:win
+          - os: macos-latest
+            runner_name: macos
+            release_script: npm run dist:mac
+
+    runs-on: ${{ matrix.os }}
+
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      CSC_LINK: ${{ secrets.CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
 
     steps:
       - name: Checkout Code
@@ -37,26 +56,32 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Build Python Engine
-        run: |
-          pyinstaller leg3ndy-engine.spec
-          New-Item -ItemType Directory -Force -Path resources_build
-          Copy-Item dist\leg3ndy-engine.exe resources_build\leg3ndy-engine.exe
+      - name: Install FFmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
 
-      - name: Download ffmpeg
+      - name: Download FFmpeg (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: |
           $ffmpegUrl = "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
           Invoke-WebRequest -Uri $ffmpegUrl -OutFile ffmpeg.zip -UseBasicParsing
           Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg_tmp -Force
           $ffmpegExe = Get-ChildItem -Recurse -Filter "ffmpeg.exe" -Path ffmpeg_tmp | Select-Object -First 1
+          New-Item -ItemType Directory -Force -Path resources_build | Out-Null
           Copy-Item $ffmpegExe.FullName resources_build\ffmpeg.exe
           Remove-Item ffmpeg.zip, ffmpeg_tmp -Recurse -Force
 
-      - name: Download Node.js standalone
-        run: |
-          Invoke-WebRequest -Uri "https://nodejs.org/dist/v22.14.0/win-x64/node.exe" -OutFile "resources_build\node.exe" -UseBasicParsing
+      - name: Build Python Engine
+        run: pyinstaller leg3ndy-engine.spec
 
       - name: Build and Publish Release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run dist
+        run: ${{ matrix.release_script }}
+
+      - name: Upload Release Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: leg3ndy-studio-${{ matrix.runner_name }}
+          path: dist_electron/**/*
+          if-no-files-found: warn

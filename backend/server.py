@@ -8,8 +8,15 @@ import time
 import requests
 import threading
 import subprocess
-import yt_dlp
 import glob
+
+try:
+    import yt_dlp_plugins.postprocessor.chrome_cookie_unlock  # noqa: F401
+    CHROME_COOKIE_UNLOCK_AVAILABLE = True
+except Exception:
+    CHROME_COOKIE_UNLOCK_AVAILABLE = False
+
+import yt_dlp
 import gc
 import tempfile
 import shutil
@@ -19,6 +26,8 @@ from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import uvicorn
 import traceback
+import socket
+import atexit
 
 if sys.platform.startswith('win'):
     if sys.stdout is not None:
@@ -31,6 +40,7 @@ if sys.platform.startswith('win'):
         sys.stderr = open(os.devnull, 'w', encoding='utf-8')
 
 app = FastAPI(title="LEG3NDY Studio API")
+APP_NAME = "LEG3NDY Studio"
 
 CONCURRENT_DOWNLOADS = threading.Semaphore(3)
 
@@ -49,63 +59,184 @@ else:
     BASE_DIR = os.path.abspath(os.path.dirname(__file__))
     PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, '..'))
 
-APP_DATA_DIR = os.path.join(os.getenv('APPDATA', ''), 'LEG3NDY Studio')
+
+def get_default_app_data_dir():
+    override = os.getenv('LEG3NDY_APP_DATA_DIR')
+    if override:
+        return os.path.abspath(override)
+
+    home = os.path.expanduser('~')
+    if sys.platform == 'win32':
+        root = os.getenv('APPDATA') or os.path.join(home, 'AppData', 'Roaming')
+    elif sys.platform == 'darwin':
+        root = os.path.join(home, 'Library', 'Application Support')
+    else:
+        root = os.getenv('XDG_CONFIG_HOME') or os.path.join(home, '.config')
+    return os.path.join(root, APP_NAME)
+
+
+def get_default_downloads_dir():
+    return os.path.join(os.path.expanduser('~'), 'Downloads')
+
+
+def get_runtime_search_roots():
+    roots = []
+    frozen_base = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else None
+    for candidate in [
+        frozen_base,
+        os.path.join(frozen_base, 'engine') if frozen_base else None,
+        PROJECT_ROOT,
+        os.path.join(PROJECT_ROOT, 'resources_build'),
+        os.path.join(PROJECT_ROOT, 'engine'),
+        os.path.join(PROJECT_ROOT, 'resources'),
+    ]:
+        if candidate and candidate not in roots:
+            roots.append(candidate)
+    return roots
+
+
+def binary_names(base_name):
+    if sys.platform == 'win32':
+        return [f'{base_name}.exe', base_name]
+    return [base_name, f'{base_name}.exe']
+
+
+def find_first_existing(paths):
+    for item in paths:
+        if item and os.path.exists(item):
+            return item
+    return None
+
+
+APP_DATA_DIR = get_default_app_data_dir()
 os.makedirs(APP_DATA_DIR, exist_ok=True)
 CACHE_DIR = os.path.join(APP_DATA_DIR, 'cache')
 os.makedirs(CACHE_DIR, exist_ok=True)
 HISTORY_FILE = os.path.join(APP_DATA_DIR, 'history.json')
 CONFIG_FILE = os.path.join(APP_DATA_DIR, 'config.json')
-USER_DOWNLOADS = os.path.join(os.path.expanduser('~'), 'Downloads')
+USER_DOWNLOADS = get_default_downloads_dir()
+
 
 def get_ffmpeg_path():
-    if getattr(sys, 'frozen', False): base = os.path.dirname(sys.executable)
-    else: base = PROJECT_ROOT
-    paths = [
-        os.path.join(base, 'ffmpeg.exe'), os.path.join(base, 'resources_build', 'ffmpeg.exe'),
-        os.path.join(base, 'engine', 'ffmpeg.exe'), os.path.join(base, 'resources', 'ffmpeg.exe'), 'ffmpeg.exe'
-    ]
-    for p in paths:
-        if p == 'ffmpeg.exe': return p
-        if os.path.exists(p): return p
-    return None
+    candidates = []
+    for root in get_runtime_search_roots():
+        for name in binary_names('ffmpeg'):
+            candidates.append(os.path.join(root, name))
+    ffmpeg_in_path = shutil.which('ffmpeg')
+    if ffmpeg_in_path:
+        candidates.append(ffmpeg_in_path)
+    return find_first_existing(candidates)
 FFMPEG_PATH = get_ffmpeg_path()
 
+
 def get_node_path():
-    # Em produção (frozen), node.exe está no mesmo dir do exe (resources/engine/)
-    if getattr(sys, 'frozen', False):
-        bundled = os.path.join(os.path.dirname(sys.executable), 'node.exe')
-        if os.path.exists(bundled): return bundled
-    # Fallback: PATH do sistema e locais comuns do Windows
-    import shutil
-    node = shutil.which('node')
-    if node: return node
-    common_paths = [
-        os.path.join(os.environ.get('ProgramFiles', 'C:\\Program Files'), 'nodejs', 'node.exe'),
-        os.path.join(os.environ.get('ProgramFiles(x86)', 'C:\\Program Files (x86)'), 'nodejs', 'node.exe'),
-        os.path.join(os.environ.get('APPDATA', ''), 'nvm', 'current', 'node.exe'),
-        os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Programs', 'node', 'node.exe'),
-    ]
-    for p in common_paths:
-        if p and os.path.exists(p): return p
-    return None
+    candidates = []
+    for root in get_runtime_search_roots():
+        for name in binary_names('node'):
+            candidates.append(os.path.join(root, name))
+
+    node_in_path = shutil.which('node')
+    if node_in_path:
+        candidates.append(node_in_path)
+
+    if sys.platform == 'win32':
+        candidates.extend([
+            os.path.join(os.environ.get('ProgramFiles', 'C:\\Program Files'), 'nodejs', 'node.exe'),
+            os.path.join(os.environ.get('ProgramFiles(x86)', 'C:\\Program Files (x86)'), 'nodejs', 'node.exe'),
+            os.path.join(os.environ.get('APPDATA', ''), 'nvm', 'current', 'node.exe'),
+            os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Programs', 'node', 'node.exe'),
+        ])
+    else:
+        candidates.extend([
+            '/opt/homebrew/bin/node',
+            '/usr/local/bin/node',
+            '/usr/bin/node',
+        ])
+    return find_first_existing(candidates)
 NODE_PATH = get_node_path()
 
-# CRÍTICO: Injeta o dir do node.exe no PATH e garante PATHEXT logo no startup.
-# O yt_dlp usa PATHEXT para achar executáveis no Windows; se estiver ausente no ambiente
-# do PyInstaller, o node.exe passa batido em _find_exe mesmo estando no PATH.
-if NODE_PATH:
+# No Windows o PyInstaller pode perder o PATHEXT e o yt-dlp deixa de achar node.exe.
+if NODE_PATH and sys.platform == 'win32':
     node_dir = os.path.dirname(NODE_PATH)
-    # Garante PATHEXT com .EXE incluído
     pathext = os.environ.get('PATHEXT', '.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC')
     if '.EXE' not in pathext.upper():
         pathext = '.EXE;' + pathext
     os.environ['PATHEXT'] = pathext
-    # Injeta dir do node no início do PATH
     current_path = os.environ.get('PATH', '')
     if node_dir not in current_path:
         os.environ['PATH'] = f"{node_dir}{os.pathsep}{current_path}"
 
 
+def get_bgutil_server_home():
+    override = os.getenv('LEG3NDY_BGUTIL_SERVER_HOME')
+    candidates = [
+        override,
+        os.path.join(os.path.dirname(sys.executable), 'bgutil-server') if getattr(sys, 'frozen', False) else None,
+        os.path.join(PROJECT_ROOT, 'resources_build', 'bgutil-server'),
+        os.path.join(PROJECT_ROOT, 'bgutil-server'),
+        os.path.join(os.path.expanduser('~'), 'bgutil-ytdlp-pot-provider', 'server'),
+    ]
+    return find_first_existing([p for p in candidates if p])
+
+
+BGUTIL_SERVER_HOME = get_bgutil_server_home() or os.path.join(os.path.expanduser('~'), 'bgutil-ytdlp-pot-provider', 'server')
+BGUTIL_SCRIPT_ENTRY = os.path.join(BGUTIL_SERVER_HOME, 'build', 'generate_once.js')
+BGUTIL_HTTP_ENTRY = os.path.join(BGUTIL_SERVER_HOME, 'build', 'main.js')
+BGUTIL_PORT = 4416
+BGUTIL_PROVIDER_AVAILABLE = bool(NODE_PATH and os.path.exists(BGUTIL_SCRIPT_ENTRY))
+bgutil_process = None
+
+def can_use_bgutil_provider():
+    return BGUTIL_PROVIDER_AVAILABLE
+
+def _is_local_port_open(port, host='127.0.0.1', timeout=0.25):
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+def start_bgutil_server():
+    global bgutil_process
+    if not (NODE_PATH and os.path.exists(BGUTIL_HTTP_ENTRY)):
+        return
+    if _is_local_port_open(BGUTIL_PORT):
+        return
+    if bgutil_process and bgutil_process.poll() is None:
+        return
+    try:
+        creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+        bgutil_process = subprocess.Popen(
+            [NODE_PATH, BGUTIL_HTTP_ENTRY],
+            cwd=BGUTIL_SERVER_HOME,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=creationflags
+        )
+        for _ in range(20):
+            if _is_local_port_open(BGUTIL_PORT):
+                break
+            time.sleep(0.2)
+    except Exception:
+        bgutil_process = None
+
+def stop_bgutil_server():
+    global bgutil_process
+    if bgutil_process and bgutil_process.poll() is None:
+        try:
+            bgutil_process.terminate()
+            bgutil_process.wait(timeout=3)
+        except Exception:
+            try:
+                bgutil_process.kill()
+            except Exception:
+                pass
+    bgutil_process = None
+
+if BGUTIL_PROVIDER_AVAILABLE:
+    start_bgutil_server()
+
+atexit.register(stop_bgutil_server)
 
 if not os.path.exists(HISTORY_FILE):
     with open(HISTORY_FILE, 'w', encoding='utf-8') as f: json.dump([], f, ensure_ascii=False)
@@ -117,6 +248,9 @@ def kill_zombies():
     if sys.platform == 'win32':
         try: subprocess.run('taskkill /F /IM ffmpeg.exe', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except: pass
+    else:
+        try: subprocess.run(['pkill', '-x', 'ffmpeg'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except: pass
 
 def force_delete_file(filepath):
     if not os.path.exists(filepath): return True
@@ -127,9 +261,15 @@ def force_delete_file(filepath):
         except:
             time.sleep(1)
             try:
-                subprocess.run(f'del /f /q "{filepath}"', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                if not os.path.exists(filepath): return True
+                os.chmod(filepath, 0o666)
+                os.remove(filepath)
+                return True
             except: pass
+            if sys.platform == 'win32':
+                try:
+                    subprocess.run(f'del /f /q "{filepath}"', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    if not os.path.exists(filepath): return True
+                except: pass
     return False
 
 def _terminator_thread(target_dir, safe_name):
@@ -239,6 +379,9 @@ spotify_engine = SpotifyEngine()
 class YouTubeEngine:
     def __init__(self):
         self.user_agents = ['Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36']
+        self.android_user_agent = 'com.google.android.youtube/21.02.35 (Linux; U; Android 11) gzip'
+        self.browser_cookie_sources = ['edge', 'chrome', 'brave', 'chromium', 'vivaldi', 'opera', 'firefox']
+        self.pot_client_profiles = ['web_pot', 'mweb_pot'] if can_use_bgutil_provider() else []
         self.cancel_flags = set()
 
     def cancel_task(self, task_id): self.cancel_flags.add(task_id); kill_zombies()
@@ -260,7 +403,41 @@ class YouTubeEngine:
                 update_state(task_id, 'downloading', 99, "Processando...")
         return hook
 
-    def get_opts(self, mode='full', task_id=None):
+    def merge_youtube_extractor_args(self, opts, **kwargs):
+        extractor_args = dict(opts.get('extractor_args') or {})
+        youtube_args = dict(extractor_args.get('youtube') or {})
+        for key, value in kwargs.items():
+            if value is not None:
+                youtube_args[key] = value
+        extractor_args['youtube'] = youtube_args
+        opts['extractor_args'] = extractor_args
+        return opts
+
+    def include_missing_pot_formats(self, opts):
+        extractor_args = dict(opts.get('extractor_args') or {})
+        youtube_args = dict(extractor_args.get('youtube') or {})
+        format_types = list(youtube_args.get('formats') or [])
+        for format_type in ('missing_pot', 'duplicate'):
+            if format_type not in format_types:
+                format_types.append(format_type)
+        youtube_args['formats'] = format_types
+        extractor_args['youtube'] = youtube_args
+        opts['extractor_args'] = extractor_args
+        return opts
+
+    def is_missing_pot_format(self, fmt):
+        return 'MISSING POT' in str(fmt.get('format_note') or '').upper()
+
+    def score_format_variant(self, fmt):
+        return (
+            1 if not self.is_missing_pot_format(fmt) else 0,
+            1 if fmt.get('url') else 0,
+            1 if fmt.get('acodec') not in (None, 'none') else 0,
+            1 if fmt.get('filesize') or fmt.get('filesize_approx') else 0,
+            float(fmt.get('tbr') or 0),
+        )
+
+    def get_opts(self, mode='full', task_id=None, client_profile=None, browser=None, include_missing_pot=False):
         opts = {
             'quiet': True, 'no_warnings': True, 'socket_timeout': 30, 'retries': 10,
             'user_agent': random.choice(self.user_agents), 'ignoreerrors': True,
@@ -273,12 +450,125 @@ class YouTubeEngine:
         cookie_path_appdata = os.path.join(APP_DATA_DIR, 'cookies.txt')
         if os.path.exists(cookie_path_root): opts['cookiefile'] = cookie_path_root
         elif os.path.exists(cookie_path_appdata): opts['cookiefile'] = cookie_path_appdata
+        elif browser: opts['cookiesfrombrowser'] = (browser,)
         
         if FFMPEG_PATH: opts['ffmpeg_location'] = FFMPEG_PATH
         if task_id: opts['progress_hooks'] = [self.get_progress_hook(task_id)]
         if mode == 'playlist_scan': opts['extract_flat'] = 'in_playlist'; opts['noplaylist'] = False
         else: opts['extract_flat'] = False; opts['noplaylist'] = True
+        if client_profile: self.apply_client_profile(opts, client_profile)
+        if include_missing_pot: self.include_missing_pot_formats(opts)
         return opts
+
+    def apply_client_profile(self, opts, client_profile):
+        if client_profile not in ('android', 'android_web', 'web', 'mweb', 'web_pot', 'mweb_pot'):
+            return opts
+        headers = dict(opts.get('http_headers') or {})
+        if client_profile in ('android', 'android_web'):
+            headers.update({
+                'User-Agent': self.android_user_agent,
+                'X-YouTube-Client-Name': '3',
+                'X-YouTube-Client-Version': '21.02.35',
+            })
+            opts['user_agent'] = self.android_user_agent
+            opts['http_headers'] = headers
+            if client_profile == 'android':
+                self.merge_youtube_extractor_args(opts, player_client=['android'])
+            else:
+                self.merge_youtube_extractor_args(opts, player_client=['android', 'web'])
+            return opts
+
+        pot_client = 'web' if client_profile in ('web', 'web_pot') else 'mweb'
+        opts['http_headers'] = headers
+        self.merge_youtube_extractor_args(opts, player_client=[pot_client])
+        if client_profile in ('web_pot', 'mweb_pot'):
+            self.merge_youtube_extractor_args(opts, fetch_pot=['always'])
+        return opts
+
+    def clone_opts_with_client_profile(self, opts, client_profile=None, browser=None, include_missing_pot=False):
+        cloned = dict(opts)
+        if 'paths' in opts: cloned['paths'] = dict(opts['paths'])
+        if 'postprocessor_args' in opts: cloned['postprocessor_args'] = dict(opts['postprocessor_args'])
+        if 'http_headers' in opts: cloned['http_headers'] = dict(opts['http_headers'])
+        if 'extractor_args' in opts:
+            cloned['extractor_args'] = json.loads(json.dumps(opts['extractor_args']))
+        else:
+            cloned.pop('extractor_args', None)
+        if 'cookiefile' not in cloned and browser: cloned['cookiesfrombrowser'] = (browser,)
+        if client_profile: self.apply_client_profile(cloned, client_profile)
+        if include_missing_pot: self.include_missing_pot_formats(cloned)
+        return cloned
+
+    def extract_video_info(self, url, client_profile=None, browser=None, include_missing_pot=False):
+        opts = self.get_opts('video_full', client_profile=client_profile, browser=browser, include_missing_pot=include_missing_pot)
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            return ydl.extract_info(url, download=False)
+
+    def get_available_video_heights(self, info):
+        heights = set()
+        for f in (info or {}).get('formats', []):
+            height = int(f.get('height') or 0)
+            if height and 144 <= height <= 1080 and f.get('vcodec') not in (None, 'none'):
+                heights.add(height)
+        return sorted(heights, reverse=True)
+
+    def should_probe_android(self, info):
+        heights = self.get_available_video_heights(info)
+        if not heights:
+            return True
+        return heights[0] <= 360 or len(heights) <= 2
+
+    def get_fallback_client_profiles(self):
+        profiles = ['web', 'mweb', 'android', 'android_web']
+        if self.pot_client_profiles:
+            for profile in self.pot_client_profiles:
+                if profile not in profiles:
+                    profiles.append(profile)
+        return profiles
+
+    def score_video_info(self, info):
+        heights = self.get_available_video_heights(info)
+        return (
+            heights[0] if heights else 0,
+            len(heights),
+            len((info or {}).get('formats', []))
+        )
+
+    def merge_video_infos(self, base_info, extra_info):
+        if not base_info:
+            return extra_info
+        if not extra_info:
+            return base_info
+        merged = dict(base_info)
+        best_formats = {}
+        for source in (base_info, extra_info):
+            for f in source.get('formats', []):
+                key = (
+                    str(f.get('format_id') or ''),
+                    str(f.get('ext') or ''),
+                    int(f.get('height') or 0),
+                    str(f.get('vcodec') or ''),
+                    str(f.get('acodec') or ''),
+                    int(f.get('fps') or 0),
+                    round(float(f.get('tbr') or 0), 2),
+                )
+                current = best_formats.get(key)
+                if not current or self.score_format_variant(f) > self.score_format_variant(current):
+                    best_formats[key] = f
+        merged['formats'] = list(best_formats.values())
+        for field in ('id', 'title', 'thumbnail', 'duration', 'duration_string', 'uploader'):
+            if not merged.get(field) and extra_info.get(field):
+                merged[field] = extra_info.get(field)
+        return merged
+
+    def estimate_format_size(self, fmt, duration, bitrate_key='tbr'):
+        filesize = fmt.get('filesize') or fmt.get('filesize_approx') or 0
+        if filesize:
+            return int(filesize)
+        bitrate = float(fmt.get(bitrate_key) or 0)
+        if bitrate > 0 and duration > 0:
+            return int((bitrate * 1000 / 8) * duration)
+        return 0
 
     def get_info(self, input_str: str) -> dict:
         try:
@@ -319,29 +609,67 @@ class YouTubeEngine:
         return {'type': 'search_results', 'query': info.get('id', ''), 'entries': entries}
         
     def process_single_video(self, url):
+        info_candidates = []
+        base_opts = self.get_opts('video_full')
+
+        try:
+            info_default = self.extract_video_info(url)
+            if info_default:
+                info_candidates.append(info_default)
+        except:
+            info_default = None
+
+        if self.should_probe_android(info_default):
+            for client_profile in self.get_fallback_client_profiles():
+                try:
+                    info_candidate = self.extract_video_info(url, client_profile=client_profile)
+                    if info_candidate:
+                        info_candidates.append(info_candidate)
+                except:
+                    pass
+
         info_full = None
-        
-        # Tenta primeiro sem forçar player_client (yt-dlp default) - retorna todos os formatos
-        with yt_dlp.YoutubeDL(self.get_opts('video_full')) as ydl_full:
-            try: info_full = ydl_full.extract_info(url, download=False)
-            except: pass
-            
-        # Fallback com android+web para conteúdo restrito/age-gate que o default não consegue
-        if not info_full or len(info_full.get('formats', [])) <= 5:
-            opts_fallback = self.get_opts('video_full')
-            opts_fallback['extractor_args'] = {'youtube': {'player_client': ['android', 'web']}}
-            with yt_dlp.YoutubeDL(opts_fallback) as ydl_fb:
-                try: 
-                    info_fb = ydl_fb.extract_info(url, download=False)
-                    if info_fb and len(info_fb.get('formats', [])) > len((info_full or {}).get('formats', [])):
-                        info_full = info_fb
-                except: pass
+        if info_candidates:
+            ranked_candidates = sorted(info_candidates, key=self.score_video_info, reverse=True)
+            info_full = ranked_candidates[0]
+            for info_candidate in ranked_candidates[1:]:
+                info_full = self.merge_video_infos(info_full, info_candidate)
+
+        if (not info_full or self.should_probe_android(info_full)) and 'cookiefile' not in base_opts:
+            for browser in self.browser_cookie_sources:
+                for client_profile in ([None] + self.get_fallback_client_profiles()):
+                    try:
+                        info_candidate = self.extract_video_info(url, client_profile=client_profile, browser=browser)
+                        if info_candidate:
+                            info_candidates.append(info_candidate)
+                    except:
+                        pass
+            if info_candidates:
+                ranked_candidates = sorted(info_candidates, key=self.score_video_info, reverse=True)
+                info_full = ranked_candidates[0]
+                for info_candidate in ranked_candidates[1:]:
+                    info_full = self.merge_video_infos(info_full, info_candidate)
+
+        # Detecta qualidades altas escondidas pelo yt-dlp como MISSING POT, para
+        # podermos sinalizar corretamente a limitação do YouTube na UI.
+        if info_full and self.should_probe_android(info_full):
+            for client_profile in ('android', 'android_web'):
+                try:
+                    info_candidate = self.extract_video_info(url, client_profile=client_profile, include_missing_pot=True)
+                    if info_candidate:
+                        info_full = self.merge_video_infos(info_full, info_candidate)
+                except:
+                    pass
 
         # Fallback CLI Extremo: bypass frozen subprocess bugs (quando Node não é chamado direito no PyInstaller)
-        if (not info_full or len(info_full.get('formats', [])) <= 5) and getattr(sys, 'frozen', False):
+        if (not info_full or self.should_probe_android(info_full)) and getattr(sys, 'frozen', False):
             import subprocess
             try:
-                cmd = [sys.executable, '-m', 'yt_dlp', '-j', '--no-warnings', '--extractor-args', 'youtube:player_client=android,web']
+                cmd = [
+                    sys.executable, '-m', 'yt_dlp', '-j', '--no-warnings',
+                    '--user-agent', self.android_user_agent,
+                    '--extractor-args', 'youtube:player_client=android,web'
+                ]
                 if NODE_PATH: cmd.extend(['--js-runtimes', f'node:{NODE_PATH}'])
                 cmd.append(url)
                 
@@ -351,9 +679,9 @@ class YouTubeEngine:
                 flags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
                 res = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, creationflags=flags, env=env, text=True)
                 info_cli = json.loads(res.strip().split('\n')[-1])
-                if info_cli and len(info_cli.get('formats', [])) > len((info_full or {}).get('formats', [])):
-                    info_full = info_cli
-            except Exception as e:
+                if info_cli:
+                    info_full = self.merge_video_infos(info_full, info_cli)
+            except Exception:
                 pass
                     
         if not info_full: return {'error': 'Não foi possível extrair os dados. O vídeo pode ser privado, restrito ou inválido.'}
@@ -373,24 +701,92 @@ class YouTubeEngine:
         
     def parse_video(self, info):
         if not info: return {'error': 'Dados do vídeo corrompidos ou bloqueados.'}
-        v_fmts, a_fmts = [], []; dur = info.get('duration') or 0; seen = set()
+        dur = info.get('duration') or 0
+        best_videos = {}
+        best_audios = {}
+
         for f in info.get('formats', []):
-            if f.get('height') and 144 <= f['height'] <= 1080 and f['height'] not in seen:
-                tbr = f.get('tbr') or 0; filesize = f.get('filesize') or 0
-                if filesize == 0 and tbr > 0 and dur > 0: filesize = (tbr * 1000 / 8) * dur
-                v_fmts.append({'format_id': f['format_id'], 'quality': f"{f['height']}p", 'filesize': history_manager.human_size(filesize), 'filesize_bytes': int(filesize), 'type': 'video'}); seen.add(f['height'])
+            format_id = str(f.get('format_id') or '').strip()
+            height = int(f.get('height') or 0)
+            if not format_id or not height or not (144 <= height <= 1080):
+                continue
+            if f.get('vcodec') in (None, 'none'):
+                continue
+
+            is_restricted = self.is_missing_pot_format(f)
+            has_audio = f.get('acodec') not in (None, 'none')
+            filesize = self.estimate_format_size(f, dur, 'tbr')
+            selector = format_id if has_audio else f"{format_id}+bestaudio[ext=m4a]/bestaudio/best/{format_id}"
+            rank = (
+                1 if not is_restricted else 0,
+                1 if has_audio else 0,
+                1 if f.get('ext') == 'mp4' else 0,
+                1 if str(f.get('vcodec') or '').startswith('avc1') else 0,
+                int(f.get('fps') or 0),
+                float(f.get('tbr') or 0),
+            )
+            item = {
+                'format_id': selector,
+                'quality': f"{height}p",
+                'filesize': history_manager.human_size(filesize),
+                'filesize_bytes': int(filesize),
+                'type': 'video'
+            }
+            if is_restricted:
+                item['restricted'] = True
+                item['restriction_reason'] = 'O YouTube exigiu validação extra para liberar esta qualidade neste vídeo.'
+            current = best_videos.get(height)
+            if not current or rank > current['rank']:
+                best_videos[height] = {
+                    'rank': rank,
+                    'item': item
+                }
+
         for f in info.get('formats', []):
-            if f.get('acodec') != 'none' and f.get('vcodec') == 'none':
-                abr = int(f.get('abr') or 0)
-                if abr > 0:
-                    filesize = f.get('filesize') or 0
-                    if filesize == 0 and dur > 0: filesize = (abr * 1000 / 8) * dur
-                    a_fmts.append({'format_id': f['format_id'], 'quality': f"{abr}kbps", 'filesize': history_manager.human_size(filesize), 'filesize_bytes': int(filesize), 'type': 'audio'})
-        v_fmts.sort(key=lambda x: int(x['quality'][:-1]) if 'p' in x['quality'] else 0, reverse=True)
-        a_fmts.sort(key=lambda x: int(x['quality'][:-4]) if 'kbps' in x['quality'] else 0, reverse=True)
+            format_id = str(f.get('format_id') or '').strip()
+            if not format_id or f.get('acodec') == 'none' or f.get('vcodec') != 'none':
+                continue
+            abr = int(f.get('abr') or 0)
+            if abr <= 0:
+                continue
+            is_restricted = self.is_missing_pot_format(f)
+            filesize = self.estimate_format_size(f, dur, 'abr')
+            rank = (
+                1 if not is_restricted else 0,
+                1 if f.get('ext') in ('m4a', 'mp4') else 0,
+                int(f.get('asr') or 0),
+                float(f.get('tbr') or 0),
+            )
+            item = {
+                'format_id': format_id,
+                'quality': f"{abr}kbps",
+                'filesize': history_manager.human_size(filesize),
+                'filesize_bytes': int(filesize),
+                'type': 'audio'
+            }
+            if is_restricted:
+                item['restricted'] = True
+                item['restriction_reason'] = 'O YouTube exigiu validação extra para liberar esta qualidade de áudio neste vídeo.'
+            current = best_audios.get(abr)
+            if not current or rank > current['rank']:
+                best_audios[abr] = {
+                    'rank': rank,
+                    'item': item
+                }
+
+        ordered_video_entries = sorted(best_videos.items(), key=lambda item: item[0], reverse=True)
+        v_fmts = [entry['item'] for _, entry in ordered_video_entries]
+        a_fmts = [entry['item'] for _, entry in sorted(best_audios.items(), key=lambda item: item[0], reverse=True)]
+        unrestricted_heights = [height for height, entry in ordered_video_entries if not entry['item'].get('restricted')]
+        max_unrestricted_height = unrestricted_heights[0] if unrestricted_heights else 0
+        blocked_qualities = [f"{height}p" for height, entry in ordered_video_entries if entry['item'].get('restricted') and height > max_unrestricted_height]
+        restriction_message = None
+        if blocked_qualities:
+            preview_blocked = ', '.join(blocked_qualities[:4])
+            restriction_message = f"Qualidades mais altas foram detectadas ({preview_blocked}), mas o YouTube exigiu validação extra nesta sessão. As opções liberadas continuam funcionando normalmente."
         
         if not v_fmts: 
-            v_fmts.append({'format_id': 'bestvideo', 'quality': 'Auto', 'filesize': 'N/A', 'filesize_bytes': 0, 'type': 'video'})
+            v_fmts.append({'format_id': 'bestvideo+bestaudio/best/best', 'quality': 'Auto', 'filesize': 'N/A', 'filesize_bytes': 0, 'type': 'video'})
             
         if not a_fmts or len(a_fmts) == 0: 
             size_320 = history_manager.human_size((320 * 1000 / 8) * dur) if dur > 0 else 'N/A'
@@ -402,7 +798,7 @@ class YouTubeEngine:
                 {'format_id': 'bestaudio/best', 'quality': '128kbps', 'filesize': size_128, 'filesize_bytes': int((128 * 1000 / 8) * dur), 'type': 'audio'}
             ]
             
-        return {'type': 'video', 'id': info['id'], 'title': info.get('title'), 'thumbnail': info.get('thumbnail'), 'duration': info.get('duration_string'), 'author': info.get('uploader'), 'formats_video': v_fmts[:8], 'formats_audio': a_fmts[:4]}
+        return {'type': 'video', 'id': info['id'], 'title': info.get('title'), 'thumbnail': info.get('thumbnail'), 'duration': info.get('duration_string'), 'author': info.get('uploader'), 'formats_video': v_fmts[:8], 'formats_audio': a_fmts[:4], 'restriction_message': restriction_message}
 
     def run_download_thread(self, task_id: str, url: str, fmt_id: str, mode: str, title: str, qual: str, custom_path: str):
         update_state(task_id, 'pending', 0, "Aguardando fila...")
@@ -419,7 +815,7 @@ class YouTubeEngine:
                 
                 ext = 'mp3'
                 if mode == 'audio':
-                    opts['format'] = 'bestaudio/best'
+                    opts['format'] = fmt_id or 'bestaudio/best'
                     clean_qual = ''.join(filter(str.isdigit, qual)) or '192'
                     opts['postprocessors'] = [
                         {'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': clean_qual},
@@ -429,7 +825,8 @@ class YouTubeEngine:
                     ]
                 else:
                     ext = 'mp4'
-                    if '1080' in qual: opts['format'] = 'bestvideo[height=1080]+bestaudio/bestvideo[height<=1080]+bestaudio/best'
+                    if fmt_id and fmt_id != 'playlist_video': opts['format'] = fmt_id
+                    elif '1080' in qual: opts['format'] = 'bestvideo[height=1080]+bestaudio/bestvideo[height<=1080]+bestaudio/best'
                     elif '720' in qual: opts['format'] = 'bestvideo[height=720]+bestaudio/bestvideo[height<=720]+bestaudio/best'
                     else: opts['format'] = f"bestvideo[height<=1080]+bestaudio/best"
                     opts['merge_output_format'] = 'mp4'
@@ -441,11 +838,25 @@ class YouTubeEngine:
                     ]
                 
                 opts['overwrites'] = True
-                try: 
-                    with yt_dlp.YoutubeDL(opts) as ydl: ydl.download([url])
-                except:
-                    opts['extractor_args'] = {'youtube': {'player_client': ['android', 'web']}}
-                    with yt_dlp.YoutubeDL(opts) as ydl: ydl.download([url])
+                attempts = [opts]
+                for client_profile in self.get_fallback_client_profiles():
+                    attempts.append(self.clone_opts_with_client_profile(opts, client_profile))
+                if 'cookiefile' not in opts:
+                    for browser in self.browser_cookie_sources:
+                        attempts.append(self.clone_opts_with_client_profile(opts, browser=browser))
+                        for client_profile in self.get_fallback_client_profiles():
+                            attempts.append(self.clone_opts_with_client_profile(opts, client_profile, browser))
+                last_error = None
+                for attempt_opts in attempts:
+                    try:
+                        with yt_dlp.YoutubeDL(attempt_opts) as ydl:
+                            ydl.download([url])
+                        last_error = None
+                        break
+                    except Exception as e:
+                        last_error = e
+                if last_error:
+                    raise last_error
 
                 
                 temp_filepath = os.path.join(temp_dir, f"{temp_filename_base}.{ext}")
@@ -538,24 +949,137 @@ def r_cancel():
 @app.get("/api/preview")
 def r_preview(id: str):
     try:
-        opts = engine.get_opts('info', 'preview')
-        opts['format'] = 'best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best'
-        opts['extractor_args'] = {'youtube': {'player_client': ['android']}}
+        target = id if id.startswith('http') else f"https://www.youtube.com/watch?v={id}"
+        info = None
+
         try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(id, download=False)
-        except:
-            opts.pop('extractor_args', None)
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(id, download=False)
-                
-        url = info.get('url')
-        if not url:
-            for f in info.get('formats', []):
-                if f.get('vcodec') != 'none' and f.get('acodec') != 'none':
-                    url = f.get('url')
+            info = engine.extract_video_info(target)
+        except Exception:
+            info = None
+
+        if not info:
+            for client_profile in engine.get_fallback_client_profiles():
+                try:
+                    info = engine.extract_video_info(target, client_profile=client_profile)
+                    if info:
+                        break
+                except Exception:
+                    continue
+
+        if not info:
+            return {'error': 'Nao foi possivel carregar a previa.'}
+
+        raw_candidates = []
+        for fmt in info.get('formats', []):
+            if fmt.get('vcodec') in (None, 'none') or fmt.get('acodec') in (None, 'none'):
+                continue
+            fmt_url = fmt.get('url')
+            if not fmt_url:
+                continue
+            protocol = str(fmt.get('protocol') or '')
+            if protocol not in ('https', 'http', 'm3u8', 'm3u8_native'):
+                continue
+            height = int(fmt.get('height') or 0)
+            mime_type = 'application/x-mpegURL' if 'm3u8' in protocol else 'video/mp4'
+            quality_label = f"{height}p" if height else 'Auto'
+            raw_candidates.append({
+                'id': f"{quality_label}-{protocol}-{fmt.get('format_id')}",
+                'label': quality_label,
+                'url': fmt_url,
+                'height': height,
+                'protocol': protocol,
+                'mime_type': mime_type,
+            })
+
+        best_by_quality = {}
+        for candidate in raw_candidates:
+            key = candidate['label']
+            current = best_by_quality.get(key)
+            if not current or (
+                (candidate['height'] or 0,
+                 1 if candidate['mime_type'] == 'application/x-mpegURL' else 0,
+                 1 if candidate['protocol'] in ('https', 'http') else 0)
+                >
+                (current['height'] or 0,
+                 1 if current['mime_type'] == 'application/x-mpegURL' else 0,
+                 1 if current['protocol'] in ('https', 'http') else 0)
+            ):
+                best_by_quality[key] = candidate
+
+        sources = sorted(best_by_quality.values(), key=lambda candidate: candidate['height'] or 0, reverse=True)
+
+        direct_fallback = next((
+            candidate for candidate in sorted(raw_candidates, key=lambda item: item['height'] or 0, reverse=True)
+            if candidate['mime_type'] == 'video/mp4'
+        ), None)
+
+        if not direct_fallback:
+            for direct_profile in ('web', 'mweb'):
+                try:
+                    direct_info = engine.extract_video_info(target, client_profile=direct_profile)
+                except Exception:
+                    direct_info = None
+                if not direct_info:
+                    continue
+                direct_candidates = []
+                for fmt in direct_info.get('formats', []):
+                    if fmt.get('vcodec') in (None, 'none') or fmt.get('acodec') in (None, 'none'):
+                        continue
+                    fmt_url = fmt.get('url')
+                    if not fmt_url:
+                        continue
+                    protocol = str(fmt.get('protocol') or '')
+                    if protocol not in ('https', 'http'):
+                        continue
+                    height = int(fmt.get('height') or 0)
+                    direct_candidates.append({
+                        'id': f"{height or 'auto'}-{protocol}-{fmt.get('format_id')}",
+                        'label': f"{height}p" if height else 'Auto',
+                        'url': fmt_url,
+                        'height': height,
+                        'protocol': protocol,
+                        'mime_type': 'video/mp4',
+                    })
+                if direct_candidates:
+                    direct_fallback = sorted(direct_candidates, key=lambda item: item['height'] or 0, reverse=True)[0]
                     break
-        return {'url': url}
+
+        if direct_fallback and all(source['id'] != direct_fallback['id'] for source in sources):
+            direct_copy = dict(direct_fallback)
+            direct_copy['label'] = f"{direct_copy['label']} (compat)"
+            sources.append(direct_copy)
+
+        sources = sources[:6]
+
+        selected = None
+        if sources:
+            selected = sources[0]
+
+        if not selected and info.get('url'):
+            selected = {
+                'id': 'auto-primary',
+                'label': info.get('format_note') or info.get('resolution') or 'Auto',
+                'url': info.get('url'),
+                'mime_type': 'video/mp4'
+            }
+            sources = [selected]
+
+        if not selected:
+            return {'error': 'Nenhum stream compativel foi encontrado para a previa.'}
+
+        return {
+            'url': selected['url'],
+            'mime_type': selected.get('mime_type', 'video/mp4'),
+            'sources': [
+                {
+                    'id': source['id'],
+                    'label': source['label'],
+                    'url': source['url'],
+                    'mime_type': source.get('mime_type', 'video/mp4')
+                }
+                for source in sources
+            ]
+        }
     except Exception as e:
         return {'error': str(e)}
 
@@ -662,8 +1186,12 @@ def r_reset():
 @app.post("/api/open-folder")
 def r_open():
     p = config_manager.get_path()
-    if sys.platform == 'win32': os.startfile(p)
-    else: subprocess.Popen(['xdg-open', p])
+    if sys.platform == 'win32':
+        os.startfile(p)
+    elif sys.platform == 'darwin':
+        subprocess.Popen(['open', p])
+    else:
+        subprocess.Popen(['xdg-open', p])
     return {'status': 'ok'}
 
 @app.post("/api/revalidate-history")

@@ -4,21 +4,26 @@ import * as fs from 'fs';
 import { spawn, execSync, ChildProcess } from 'child_process';
 import { autoUpdater } from 'electron-updater';
 
+const APP_NAME = 'LEG3NDY Studio';
+const isMac = process.platform === 'darwin';
+
 let mainWindow: BrowserWindow | null = null;
 let pythonProcess: ChildProcess | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
 let minimizeToTray = true;
-
-app.setAppUserModelId('com.leg3ndy.studio');
-
-// --- ARGS ---
+const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+const rendererIndexPath = path.join(__dirname, 'frontend', 'dist', 'index.html');
+const APP_USER_MODEL_ID = app.isPackaged ? 'com.leg3ndy.studio' : 'com.leg3ndy.studio.dev';
 const isHiddenStart = process.argv.includes('--hidden');
+const appDataDir = path.join(app.getPath('appData'), APP_NAME);
+const CONFIG_PATH = path.join(appDataDir, 'config.json');
 
-const CONFIG_PATH = path.join(app.getPath('appData'), 'LEG3NDY Studio', 'config.json');
+app.setAppUserModelId(APP_USER_MODEL_ID);
 
-const appDataDir = path.join(app.getPath('appData'), 'LEG3NDY Studio');
-if (!fs.existsSync(appDataDir)) fs.mkdirSync(appDataDir, { recursive: true });
+if (!fs.existsSync(appDataDir)) {
+    fs.mkdirSync(appDataDir, { recursive: true });
+}
 
 let downloadWatcher: fs.FSWatcher | null = null;
 
@@ -30,41 +35,93 @@ function debounce<T extends (...args: any[]) => void>(func: T, delay: number): (
     };
 }
 
-// --- WATCHER CORRIGIDO ---
 const debouncedDownloadFolderChanged = debounce((eventType: string, filename: string | null) => {
     if (!filename) return;
 
-    // IGNORA ARQUIVOS TEMPORÁRIOS
     if (filename.endsWith('.part') ||
         filename.endsWith('.ytdl') ||
         filename.endsWith('.tmp') ||
         filename.includes('.temp')) return;
 
-    console.log(`[Watcher] Alteração Válida: ${filename}`);
+    console.log(`[Watcher] Alteracao Valida: ${filename}`);
     if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('download-folder-changed', { eventType, filename });
     }
 }, 2000);
 
+function getRuntimeAssetPath(...segments: string[]) {
+    return app.isPackaged
+        ? path.join(process.resourcesPath, ...segments)
+        : path.join(__dirname, ...segments);
+}
+
+function resolveFirstExistingPath(candidates: string[]) {
+    return candidates.find((candidate) => fs.existsSync(candidate));
+}
+
+function getBundledExecutableCandidates(baseName: string) {
+    const names = process.platform === 'win32'
+        ? [`${baseName}.exe`, baseName]
+        : [baseName, `${baseName}.exe`];
+    return names.map((name) => path.join(process.resourcesPath, 'engine', name));
+}
+
+function getBundledBgutilServerHome() {
+    const bundledPath = app.isPackaged
+        ? path.join(process.resourcesPath, 'engine', 'bgutil-server')
+        : path.join(__dirname, 'resources_build', 'bgutil-server');
+    if (fs.existsSync(bundledPath)) {
+        return bundledPath;
+    }
+    return process.env.LEG3NDY_BGUTIL_SERVER_HOME;
+}
+
+function getAppIconPath() {
+    if (process.platform === 'win32') {
+        return getRuntimeAssetPath('public', 'icons', 'icon.ico');
+    }
+    return getRuntimeAssetPath('public', 'icons', 'icon.png');
+}
+
+function showMainWindow() {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    if (!mainWindow.isVisible()) mainWindow.show();
+    mainWindow.focus();
+}
+
 function createWindow() {
     mainWindow = new BrowserWindow({
-        width: 1280, height: 850, minWidth: 1000, minHeight: 700,
-        frame: false, backgroundColor: '#0b0d12',
-        title: 'LEG3NDY Studio',
-        icon: path.join(__dirname, 'icon-app.png'),
+        width: 1280,
+        height: 850,
+        minWidth: 1000,
+        minHeight: 700,
+        frame: isMac,
+        titleBarStyle: isMac ? 'hiddenInset' : undefined,
+        trafficLightPosition: isMac ? { x: 16, y: 14 } : undefined,
+        backgroundColor: '#0b0d12',
+        title: APP_NAME,
+        icon: getAppIconPath(),
         show: false,
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
-            preload: path.join(__dirname, 'preload.js') // will be .js after compilation
+            preload: path.join(__dirname, 'preload.js')
         }
     });
 
-    mainWindow.loadFile('frontend/index.html');
+    if (devServerUrl) {
+        mainWindow.loadURL(devServerUrl);
+    } else {
+        mainWindow.loadFile(rendererIndexPath);
+    }
 
     mainWindow.once('ready-to-show', () => {
-        if (!isHiddenStart && mainWindow) mainWindow.show();
-        else console.log("Iniciando em modo Stealth");
+        if (!isHiddenStart && mainWindow) {
+            mainWindow.show();
+        } else {
+            console.log('Iniciando em modo Stealth');
+        }
     });
 
     mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -78,40 +135,63 @@ function createWindow() {
             mainWindow.hide();
         }
     });
+
+    mainWindow.on('closed', () => {
+        mainWindow = null;
+    });
 }
 
 function createTray() {
     try {
-        const iconPath = app.isPackaged
-            ? path.join(process.resourcesPath, 'icon-app.png')
-            : path.join(__dirname, 'icon-app.png');
+        const iconPath = getAppIconPath();
+        const trayIcon = isMac
+            ? nativeImage.createFromPath(iconPath).resize({ width: 18, height: 18 })
+            : iconPath;
 
-        tray = new Tray(iconPath);
+        tray = new Tray(trayIcon);
         const contextMenu = Menu.buildFromTemplate([
-            { label: 'Abrir LEG3NDY Studio', click: () => { if (mainWindow) mainWindow.show(); } },
+            { label: 'Abrir LEG3NDY Studio', click: () => showMainWindow() },
             { label: 'Sair', click: () => { isQuitting = true; app.quit(); } }
         ]);
-        tray.setToolTip('LEG3NDY Studio');
+        tray.setToolTip(APP_NAME);
         tray.setContextMenu(contextMenu);
-        tray.on('click', () => { if (mainWindow) mainWindow.show(); });
-    } catch (e) { console.log("Erro Tray:", e); }
+        tray.on('click', () => showMainWindow());
+    } catch (e) {
+        console.log('Erro Tray:', e);
+    }
+}
+
+function getDevPythonCommand() {
+    return process.env.LEG3NDY_PYTHON_PATH || (process.platform === 'win32' ? 'python' : 'python3');
 }
 
 function startPython() {
-    let scriptPath: string;
     let cmd: string;
     let args: string[];
 
     if (app.isPackaged) {
-        scriptPath = path.join(process.resourcesPath, 'engine', 'leg3ndy-engine.exe');
-        cmd = scriptPath;
+        const backendPath = resolveFirstExistingPath(getBundledExecutableCandidates('leg3ndy-engine'));
+        if (!backendPath) {
+            console.error('Nao foi possivel localizar o backend empacotado para esta plataforma.');
+            return;
+        }
+        cmd = backendPath;
         args = [];
     } else {
-        scriptPath = path.join(__dirname, 'backend', 'server.py');
-        cmd = 'python';
-        args = [scriptPath];
+        cmd = getDevPythonCommand();
+        args = [path.join(__dirname, 'backend', 'server.py')];
     }
-    const spawnOptions = { windowsHide: true };
+
+    const bgutilServerHome = getBundledBgutilServerHome();
+    const spawnOptions = {
+        windowsHide: process.platform === 'win32',
+        env: {
+            ...process.env,
+            LEG3NDY_APP_DATA_DIR: appDataDir,
+            ...(bgutilServerHome ? { LEG3NDY_BGUTIL_SERVER_HOME: bgutilServerHome } : {})
+        }
+    };
+
     console.log(`Iniciando Backend: ${cmd}`);
     pythonProcess = spawn(cmd, args, spawnOptions);
 
@@ -150,10 +230,9 @@ function setupAutoUpdater() {
         isManualUpdateCheck = false;
     });
 
-    autoUpdater.on('update-not-available', (info) => {
-        if (mainWindow) {
-            // Silencioso se não houver update e foi auto. Se manual, avisa:
-            if (isManualUpdateCheck) mainWindow.webContents.send('update-event', { type: 'not-available' });
+    autoUpdater.on('update-not-available', () => {
+        if (mainWindow && isManualUpdateCheck) {
+            mainWindow.webContents.send('update-event', { type: 'not-available' });
         }
         isManualUpdateCheck = false;
     });
@@ -171,26 +250,18 @@ function setupAutoUpdater() {
         if (mainWindow) mainWindow.webContents.send('update-event', { type: 'downloaded', version: info.version });
     });
 
-    // Inicia a primeira checagem com um delayzinho pra dar tempo da tela carregar
     setTimeout(() => { autoUpdater.checkForUpdatesAndNotify(); }, 5000);
-
-    // Checa a cada 50 minutos
     setInterval(() => {
         autoUpdater.checkForUpdatesAndNotify();
     }, 50 * 60 * 1000);
 }
 
-// Inicializamos o watcher do frontend via foco da janela, não precisamos mais disso:
-// ipcMain.on('config-download-path-changed', (e, newPath: string) => startDownloadFolderWatcher());
-
 ipcMain.on('check-for-updates-manual', () => {
     isManualUpdateCheck = true;
     if (!app.isPackaged && mainWindow) {
-        // Modo Dev: O electron-updater ignora a verificação se o app não estiver empacotado.
-        // Simulando fluxo visual para testes locais.
         mainWindow.webContents.send('update-event', { type: 'checking', manual: true });
         setTimeout(() => {
-            mainWindow?.webContents.send('update-event', { type: 'error', error: 'Modo de Desenvolvimento (Atualização pulada)', manual: true });
+            mainWindow?.webContents.send('update-event', { type: 'error', error: 'Modo de Desenvolvimento (Atualizacao pulada)', manual: true });
         }, 2000);
         return;
     }
@@ -206,24 +277,30 @@ ipcMain.handle('select-folder', async () => {
     const res = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] });
     return res.canceled ? null : res.filePaths[0];
 });
-ipcMain.handle('open-path', async (e, p: string) => await shell.openPath(p));
-ipcMain.handle('get-thumbnail', async (e, filePath: string) => {
+
+ipcMain.handle('open-path', async (_e, p: string) => await shell.openPath(p));
+
+ipcMain.handle('get-thumbnail', async (_e, filePath: string) => {
     try {
         if (filePath.toLowerCase().endsWith('.mp4') || filePath.toLowerCase().endsWith('.mkv')) {
             const size = { width: 160, height: 90 };
             const img = await nativeImage.createThumbnailFromPath(filePath, size);
             return img.toDataURL();
         }
-    } catch (err) { console.error('[get-thumbnail] Error:', filePath, err); }
+    } catch (err) {
+        console.error('[get-thumbnail] Error:', filePath, err);
+    }
     return null;
 });
-ipcMain.on('open-local-media', async (e, p: string) => {
+
+ipcMain.on('open-local-media', async (_e, p: string) => {
     try {
         await shell.openPath(p);
     } catch (err) {
-        console.error("Erro abrir midia:", err);
+        console.error('Erro abrir midia:', err);
     }
 });
+
 ipcMain.on('window-min', () => { if (mainWindow) mainWindow.minimize(); });
 ipcMain.on('window-max', () => { if (mainWindow) mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize(); });
 ipcMain.on('window-close', () => { if (mainWindow) mainWindow.close(); });
@@ -241,13 +318,14 @@ ipcMain.handle('get-app-version', () => {
     return app.getVersion();
 });
 
-ipcMain.handle('set-settings', (e, settings: any) => {
+ipcMain.handle('set-settings', (_e, settings: any) => {
     if (settings.openAtLogin !== undefined) {
         const args = settings.startHidden ? ['--hidden'] : [];
         app.setLoginItemSettings({
             openAtLogin: settings.openAtLogin,
+            openAsHidden: Boolean(settings.startHidden),
             path: process.execPath,
-            args: args
+            args
         });
         writeConfig({ auto_start: settings.openAtLogin, start_minimized: settings.startHidden });
     }
@@ -263,11 +341,7 @@ if (!gotTheLock) {
     app.quit();
 } else {
     app.on('second-instance', () => {
-        if (mainWindow) {
-            if (mainWindow.isMinimized()) mainWindow.restore();
-            if (!mainWindow.isVisible()) mainWindow.show();
-            mainWindow.focus();
-        }
+        showMainWindow();
     });
 
     app.whenReady().then(() => {
@@ -279,7 +353,19 @@ if (!gotTheLock) {
     });
 }
 
+app.on('activate', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+        createWindow();
+        return;
+    }
+    showMainWindow();
+});
+
 app.on('will-quit', () => {
+    if (downloadWatcher) {
+        downloadWatcher.close();
+        downloadWatcher = null;
+    }
     if (pythonProcess && pythonProcess.pid) {
         try {
             if (process.platform === 'win32') {
@@ -287,8 +373,12 @@ app.on('will-quit', () => {
             } else {
                 pythonProcess.kill();
             }
-        } catch (e: any) { console.log(e.message); }
+        } catch (e: any) {
+            console.log(e.message);
+        }
     }
 });
 
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+app.on('window-all-closed', () => {
+    if (!isMac) app.quit();
+});
