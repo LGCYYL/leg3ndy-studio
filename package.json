@@ -31,6 +31,8 @@
   },
   "devDependencies": {
     "@electron/notarize": "^3.1.1",
+    "@emnapi/core": "1.9.1",
+    "@emnapi/runtime": "1.9.1",
     "@types/node": "^20.0.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

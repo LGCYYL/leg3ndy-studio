@@ -6,8 +6,20 @@
     "strict": false,
     "esModuleInterop": true,
     "rootDir": "./",
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "types": [
+      "node"
+    ]
   },
-  "include": ["main.ts", "preload.ts"],
-  "exclude": ["node_modules", "backend", "dist_electron", "resources_build", "frontend"]
+  "include": [
+    "main.ts",
+    "preload.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "backend",
+    "dist_electron",
+    "resources_build",
+    "frontend"
+  ]
 }
