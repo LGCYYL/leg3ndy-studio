@@ -57,15 +57,24 @@ function getEngineSource() {
 }
 
 function getFfmpegSource() {
+  const platformCandidates = isWin
+    ? [
+        path.join(resourcesDir, 'ffmpeg.exe'),
+        path.join(resourcesDir, 'ffmpeg'),
+        findInPath(['ffmpeg.exe', 'ffmpeg'])
+      ]
+    : [
+        findInPath(['ffmpeg']),
+        '/opt/homebrew/bin/ffmpeg',
+        '/usr/local/bin/ffmpeg',
+        '/usr/bin/ffmpeg',
+        path.join(resourcesDir, 'ffmpeg'),
+        path.join(resourcesDir, 'ffmpeg.exe')
+      ];
+
   return findFirstExisting([
     process.env.LEG3NDY_FFMPEG_PATH,
-    path.join(resourcesDir, `ffmpeg${binaryExt}`),
-    path.join(resourcesDir, 'ffmpeg.exe'),
-    path.join(resourcesDir, 'ffmpeg'),
-    findInPath(isWin ? ['ffmpeg.exe', 'ffmpeg'] : ['ffmpeg']),
-    '/opt/homebrew/bin/ffmpeg',
-    '/usr/local/bin/ffmpeg',
-    '/usr/bin/ffmpeg'
+    ...platformCandidates
   ]);
 }
 
