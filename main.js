@@ -234,33 +234,32 @@ let isManualUpdateCheck = false;
 function setupAutoUpdater() {
     electron_updater_1.autoUpdater.autoDownload = true;
     electron_updater_1.autoUpdater.autoInstallOnAppQuit = true;
+    const emitUpdateEvent = (payload, resetManual = false) => {
+        const manual = isManualUpdateCheck;
+        if (mainWindow) {
+            mainWindow.webContents.send('update-event', { ...payload, manual });
+        }
+        if (resetManual) {
+            isManualUpdateCheck = false;
+        }
+    };
     electron_updater_1.autoUpdater.on('checking-for-update', () => {
-        if (mainWindow)
-            mainWindow.webContents.send('update-event', { type: 'checking', manual: isManualUpdateCheck });
+        emitUpdateEvent({ type: 'checking' });
     });
     electron_updater_1.autoUpdater.on('update-available', (info) => {
-        if (mainWindow)
-            mainWindow.webContents.send('update-event', { type: 'available', info });
-        isManualUpdateCheck = false;
+        emitUpdateEvent({ type: 'available', info });
     });
     electron_updater_1.autoUpdater.on('update-not-available', () => {
-        if (mainWindow && isManualUpdateCheck) {
-            mainWindow.webContents.send('update-event', { type: 'not-available' });
-        }
-        isManualUpdateCheck = false;
+        emitUpdateEvent({ type: 'not-available' }, true);
     });
     electron_updater_1.autoUpdater.on('error', (err) => {
-        if (mainWindow)
-            mainWindow.webContents.send('update-event', { type: 'error', error: err.message, manual: isManualUpdateCheck });
-        isManualUpdateCheck = false;
+        emitUpdateEvent({ type: 'error', error: err.message }, true);
     });
     electron_updater_1.autoUpdater.on('download-progress', (progressObj) => {
-        if (mainWindow)
-            mainWindow.webContents.send('update-event', { type: 'progress', percent: progressObj.percent });
+        emitUpdateEvent({ type: 'progress', percent: progressObj.percent });
     });
     electron_updater_1.autoUpdater.on('update-downloaded', (info) => {
-        if (mainWindow)
-            mainWindow.webContents.send('update-event', { type: 'downloaded', version: info.version });
+        emitUpdateEvent({ type: 'downloaded', version: info.version }, true);
     });
     setTimeout(() => { electron_updater_1.autoUpdater.checkForUpdatesAndNotify(); }, 5000);
     setInterval(() => {

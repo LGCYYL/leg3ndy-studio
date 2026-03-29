@@ -221,33 +221,38 @@ function setupAutoUpdater() {
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
 
+    const emitUpdateEvent = (payload: Record<string, unknown>, resetManual = false) => {
+        const manual = isManualUpdateCheck;
+        if (mainWindow) {
+            mainWindow.webContents.send('update-event', { ...payload, manual });
+        }
+        if (resetManual) {
+            isManualUpdateCheck = false;
+        }
+    };
+
     autoUpdater.on('checking-for-update', () => {
-        if (mainWindow) mainWindow.webContents.send('update-event', { type: 'checking', manual: isManualUpdateCheck });
+        emitUpdateEvent({ type: 'checking' });
     });
 
     autoUpdater.on('update-available', (info) => {
-        if (mainWindow) mainWindow.webContents.send('update-event', { type: 'available', info });
-        isManualUpdateCheck = false;
+        emitUpdateEvent({ type: 'available', info });
     });
 
     autoUpdater.on('update-not-available', () => {
-        if (mainWindow && isManualUpdateCheck) {
-            mainWindow.webContents.send('update-event', { type: 'not-available' });
-        }
-        isManualUpdateCheck = false;
+        emitUpdateEvent({ type: 'not-available' }, true);
     });
 
     autoUpdater.on('error', (err) => {
-        if (mainWindow) mainWindow.webContents.send('update-event', { type: 'error', error: err.message, manual: isManualUpdateCheck });
-        isManualUpdateCheck = false;
+        emitUpdateEvent({ type: 'error', error: err.message }, true);
     });
 
     autoUpdater.on('download-progress', (progressObj) => {
-        if (mainWindow) mainWindow.webContents.send('update-event', { type: 'progress', percent: progressObj.percent });
+        emitUpdateEvent({ type: 'progress', percent: progressObj.percent });
     });
 
     autoUpdater.on('update-downloaded', (info) => {
-        if (mainWindow) mainWindow.webContents.send('update-event', { type: 'downloaded', version: info.version });
+        emitUpdateEvent({ type: 'downloaded', version: info.version }, true);
     });
 
     setTimeout(() => { autoUpdater.checkForUpdatesAndNotify(); }, 5000);
