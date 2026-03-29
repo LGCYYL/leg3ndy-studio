@@ -9,48 +9,17 @@ permissions:
   contents: write
 
 jobs:
-  cleanup_release_assets:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Remove existing assets for this tag
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const tag = context.ref.replace('refs/tags/', '');
-            const { owner, repo } = context.repo;
-
-            try {
-              const { data: release } = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
-              core.info(`Release encontrada para ${tag}: ${release.id}`);
-
-              for (const asset of release.assets) {
-                core.info(`Removendo asset antigo: ${asset.name}`);
-                await github.rest.repos.deleteReleaseAsset({
-                  owner,
-                  repo,
-                  asset_id: asset.id,
-                });
-              }
-            } catch (error) {
-              if (error.status === 404) {
-                core.info(`Nenhuma release existente encontrada para ${tag}.`);
-                return;
-              }
-              throw error;
-            }
-
   build:
-    needs: cleanup_release_assets
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: windows-latest
             runner_name: windows
-            release_script: npm run dist:win
+            release_script: npm run dist:win -- --publish never
           - os: macos-latest
             runner_name: macos
-            release_script: npm run dist:mac
+            release_script: npm run dist:mac -- --publish never
 
     runs-on: ${{ matrix.os }}
 
@@ -127,13 +96,68 @@ jobs:
       - name: Build Python Engine
         run: pyinstaller leg3ndy-engine.spec
 
-      - name: Build and Publish Release
+      - name: Build Release Files
         run: ${{ matrix.release_script }}
 
-      - name: Upload Release Artifacts
+      - name: Upload Release Files
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: leg3ndy-studio-${{ matrix.runner_name }}
-          path: dist_electron/**/*
           if-no-files-found: warn
+          path: |
+            dist_electron/*.exe
+            dist_electron/*.dmg
+            dist_electron/*.zip
+            dist_electron/*.blockmap
+            dist_electron/*.yml
+
+  publish_release:
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download Built Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Publish GitHub Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+          NOTES_FILE="docs/releases/${TAG}.md"
+
+          files=()
+          for file in release-artifacts/**/*.exe release-artifacts/**/*.dmg release-artifacts/**/*.zip release-artifacts/**/*.blockmap release-artifacts/**/*.yml; do
+            [ -f "$file" ] || continue
+            base="$(basename "$file")"
+            if [ "$base" = "builder-debug.yml" ]; then
+              continue
+            fi
+            files+=("$file")
+          done
+
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "Nenhum arquivo de release encontrado para publicar."
+            exit 1
+          fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release delete "$TAG" -y
+          fi
+
+          if [ -f "$NOTES_FILE" ]; then
+            gh release create "$TAG" "${files[@]}" --title "LEG3NDY Studio ${VERSION}" --notes-file "$NOTES_FILE"
+          else
+            gh release create "$TAG" "${files[@]}" --title "LEG3NDY Studio ${VERSION}" --generate-notes
+          fi
