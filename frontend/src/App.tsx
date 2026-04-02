@@ -44,6 +44,31 @@ const DEFAULT_PREVIEW: PreviewState = {
   status: 'idle'
 };
 
+const BOOTSTRAP_RETRIES = 8;
+const BOOTSTRAP_RETRY_DELAY_MS = 600;
+
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function retryRequest<T>(task: () => Promise<T>, retries = BOOTSTRAP_RETRIES, delayMs = BOOTSTRAP_RETRY_DELAY_MS): Promise<T> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < retries; attempt += 1) {
+    try {
+      return await task();
+    } catch (error) {
+      lastError = error;
+      if (attempt === retries - 1) {
+        break;
+      }
+      await wait(delayMs);
+    }
+  }
+
+  throw lastError ?? new Error('Falha ao carregar dados iniciais.');
+}
+
 export default function App() {
   const [currentView, setCurrentView] = useState<ViewName>('home');
   const [query, setQuery] = useState('');
@@ -104,31 +129,38 @@ export default function App() {
   useEffect(() => {
     let active = true;
 
-    async function bootstrap() {
-      try {
-        const configData = await api.getConfig();
+    void retryRequest(() => api.getConfig())
+      .then((configData) => {
         if (!active) {
           return;
         }
 
         setConfig(configData);
         setSelectedDownloadPath(configData.download_path || '');
+      })
+      .catch(() => {
+        // Ignora falhas de boot do backend para não travar a interface.
+      });
 
-        const electronSettings = await window.electronAPI?.getSysSettings?.();
+    void Promise.resolve(window.electronAPI?.getSysSettings?.())
+      .then((electronSettings) => {
         if (active && electronSettings) {
           setSystemSettings(electronSettings);
         }
+      })
+      .catch(() => {
+        // Ignora falhas do shell do Electron.
+      });
 
-        const version = await window.electronAPI?.getAppVersion?.();
+    void Promise.resolve(window.electronAPI?.getAppVersion?.())
+      .then((version) => {
         if (active && version) {
           setAppVersion(version);
         }
-      } catch {
-        // Ignora falhas de boot para não travar a interface.
-      }
-    }
-
-    void bootstrap();
+      })
+      .catch(() => {
+        // Ignora falhas do shell do Electron.
+      });
 
     return () => {
       active = false;
@@ -707,14 +739,17 @@ export default function App() {
   }
 
   async function handleOpenDownloadsFolder() {
-    if (selectedDownloadPath) {
-      await window.electronAPI?.openPath?.(selectedDownloadPath);
+    const activeDownloadPath = selectedDownloadPath || config.download_path || '';
+
+    if (activeDownloadPath) {
+      await window.electronAPI?.openPath?.(activeDownloadPath);
       return;
     }
 
     await api.openFolder();
   }
 
+  const activeDownloadPath = selectedDownloadPath || config.download_path || '';
   const pendingItems = queue.filter((item) => item.status === 'pending');
   const queueCount = pendingItems.length;
   const totalPendingBytes = pendingItems.reduce((total, item) => total + (item.filesize_bytes || 0), 0);
@@ -737,8 +772,8 @@ export default function App() {
         <Sidebar
           currentView={currentView}
           queueCount={queueCount}
-          currentPath={truncatePath(selectedDownloadPath)}
-          currentPathTitle={selectedDownloadPath || 'Padrão'}
+          currentPath={truncatePath(activeDownloadPath)}
+          currentPathTitle={activeDownloadPath || 'Padrão'}
           onNavigate={handleNavigate}
           onChooseFolder={handleChooseFolder}
           onResetPath={handleResetPath}
