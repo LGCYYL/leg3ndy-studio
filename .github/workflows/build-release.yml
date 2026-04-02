@@ -127,26 +127,45 @@ jobs:
         with:
           path: release-artifacts
 
-      - name: Publish GitHub Release
+      - name: Prepare Release Uploads
         shell: bash
         run: |
           set -euo pipefail
           shopt -s globstar nullglob
 
+          mkdir -p release-upload
+
+          for file in release-artifacts/**/*.exe release-artifacts/**/*.dmg release-artifacts/**/*.zip release-artifacts/**/*.blockmap release-artifacts/**/*.yml; do
+            [ -f "$file" ] || continue
+            base="$(basename "$file")"
+
+            if [ "$base" = "builder-debug.yml" ]; then
+              continue
+            fi
+
+            target_name="$base"
+            case "$base" in
+              *.yml)
+                ;;
+              *)
+                target_name="${base// /-}"
+                ;;
+            esac
+
+            cp "$file" "release-upload/$target_name"
+          done
+
+      - name: Publish GitHub Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
           TAG="${GITHUB_REF#refs/tags/}"
           VERSION="${TAG#v}"
           NOTES_FILE="docs/releases/${TAG}.md"
 
-          files=()
-          for file in release-artifacts/**/*.exe release-artifacts/**/*.dmg release-artifacts/**/*.zip release-artifacts/**/*.blockmap release-artifacts/**/*.yml; do
-            [ -f "$file" ] || continue
-            base="$(basename "$file")"
-            if [ "$base" = "builder-debug.yml" ]; then
-              continue
-            fi
-            files+=("$file")
-          done
-
+          files=(release-upload/*)
           if [ ${#files[@]} -eq 0 ]; then
             echo "Nenhum arquivo de release encontrado para publicar."
             exit 1

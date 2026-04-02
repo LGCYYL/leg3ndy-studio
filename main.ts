@@ -220,6 +220,7 @@ let isManualUpdateCheck = false;
 function setupAutoUpdater() {
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.disableDifferentialDownload = true;
 
     const emitUpdateEvent = (payload: Record<string, unknown>, resetManual = false) => {
         const manual = isManualUpdateCheck;
@@ -274,6 +275,11 @@ ipcMain.on('check-for-updates-manual', () => {
 });
 
 ipcMain.on('install-update', () => {
+    if (process.platform === 'win32') {
+        autoUpdater.quitAndInstall(true, true);
+        return;
+    }
+
     autoUpdater.quitAndInstall();
 });
 
