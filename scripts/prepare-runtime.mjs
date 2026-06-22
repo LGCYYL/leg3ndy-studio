@@ -101,9 +101,19 @@ for (const entry of [`leg3ndy-engine${binaryExt}`, 'leg3ndy-engine.exe', 'leg3nd
 }
 removeIfExists(path.join(resourcesDir, 'bgutil-server'));
 
-fs.writeFileSync(path.join(resourcesDir, `leg3ndy-engine${binaryExt}`), engineBuffer);
-fs.writeFileSync(path.join(resourcesDir, `ffmpeg${binaryExt}`), ffmpegBuffer);
-fs.writeFileSync(path.join(resourcesDir, `node${binaryExt}`), nodeBuffer);
+const enginePath = path.join(resourcesDir, `leg3ndy-engine${binaryExt}`);
+const ffmpegPath = path.join(resourcesDir, `ffmpeg${binaryExt}`);
+const nodePath = path.join(resourcesDir, `node${binaryExt}`);
+
+fs.writeFileSync(enginePath, engineBuffer);
+fs.writeFileSync(ffmpegPath, ffmpegBuffer);
+fs.writeFileSync(nodePath, nodeBuffer);
+
+if (!isWin) {
+  fs.chmodSync(enginePath, '755');
+  fs.chmodSync(ffmpegPath, '755');
+  fs.chmodSync(nodePath, '755');
+}
 
 const copiedBgutil = copyDirectoryIfExists(bgutilSource, path.join(resourcesDir, 'bgutil-server'));
 
