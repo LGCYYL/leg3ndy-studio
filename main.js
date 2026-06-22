@@ -327,13 +327,17 @@ electron_1.ipcMain.handle('get-app-version', () => {
 });
 electron_1.ipcMain.handle('set-settings', (_e, settings) => {
     if (settings.openAtLogin !== undefined) {
-        const args = settings.startHidden ? ['--hidden'] : [];
-        electron_1.app.setLoginItemSettings({
+        const loginSettings = {
             openAtLogin: settings.openAtLogin,
-            openAsHidden: Boolean(settings.startHidden),
-            path: process.execPath,
-            args
-        });
+        };
+        if (process.platform === 'win32') {
+            loginSettings.path = process.execPath;
+            loginSettings.args = settings.startHidden ? ['--hidden'] : [];
+        }
+        else if (process.platform === 'darwin') {
+            loginSettings.openAsHidden = Boolean(settings.startHidden);
+        }
+        electron_1.app.setLoginItemSettings(loginSettings);
         writeConfig({ auto_start: settings.openAtLogin, start_minimized: settings.startHidden });
     }
     if (settings.minimizeToTray !== undefined) {
@@ -388,6 +392,6 @@ electron_1.app.on('will-quit', () => {
     }
 });
 electron_1.app.on('window-all-closed', () => {
-    if (!isMac)
+    if (!isMac || !minimizeToTray)
         electron_1.app.quit();
 });

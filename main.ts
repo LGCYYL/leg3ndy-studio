@@ -331,13 +331,16 @@ ipcMain.handle('get-app-version', () => {
 
 ipcMain.handle('set-settings', (_e, settings: any) => {
     if (settings.openAtLogin !== undefined) {
-        const args = settings.startHidden ? ['--hidden'] : [];
-        app.setLoginItemSettings({
+        const loginSettings: Electron.Settings = {
             openAtLogin: settings.openAtLogin,
-            openAsHidden: Boolean(settings.startHidden),
-            path: process.execPath,
-            args
-        });
+        };
+        if (process.platform === 'win32') {
+            loginSettings.path = process.execPath;
+            loginSettings.args = settings.startHidden ? ['--hidden'] : [];
+        } else if (process.platform === 'darwin') {
+            loginSettings.openAsHidden = Boolean(settings.startHidden);
+        }
+        app.setLoginItemSettings(loginSettings);
         writeConfig({ auto_start: settings.openAtLogin, start_minimized: settings.startHidden });
     }
     if (settings.minimizeToTray !== undefined) {
@@ -395,5 +398,5 @@ app.on('will-quit', () => {
 });
 
 app.on('window-all-closed', () => {
-    if (!isMac) app.quit();
+    if (!isMac || !minimizeToTray) app.quit();
 });

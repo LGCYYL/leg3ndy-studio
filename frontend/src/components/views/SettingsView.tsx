@@ -19,6 +19,9 @@ export function SettingsView({
   onToggleMinimizeTray,
   onCheckForUpdates
 }: SettingsViewProps) {
+  const platform = window.electronAPI?.getRuntimeInfo?.()?.platform;
+  const isMac = platform === 'darwin';
+
   return (
     <div className="view-section">
       <h2 style={{ fontSize: 24, marginBottom: 30 }}>Ajustes</h2>
@@ -26,8 +29,8 @@ export function SettingsView({
         <div className="setting-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 20 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div className="setting-info">
-              <h3>Iniciar com o Windows</h3>
-              <p style={{ color: '#64748B', fontSize: 13 }}>O app ficará pronto na bandeja.</p>
+              <h3>{isMac ? 'Iniciar com o macOS' : 'Iniciar com o Windows'}</h3>
+              <p style={{ color: '#64748B', fontSize: 13 }}>{isMac ? 'O app ficará pronto em background.' : 'O app ficará pronto na bandeja.'}</p>
             </div>
             <label className="switch"><input type="checkbox" checked={openAtLogin} onChange={(event) => onToggleAutoStart(event.target.checked)} /><span className="slider"></span></label>
           </div>
@@ -35,7 +38,7 @@ export function SettingsView({
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div className="setting-info">
               <h3>Iniciar Minimizado</h3>
-              <p style={{ color: '#64748B', fontSize: 13 }}>Não abre a janela ao ligar o PC (Modo Stealth).</p>
+              <p style={{ color: '#64748B', fontSize: 13 }}>{isMac ? 'Não abre a janela ao ligar o Mac (Modo Stealth).' : 'Não abre a janela ao ligar o PC (Modo Stealth).'}</p>
             </div>
             <label className="switch"><input type="checkbox" checked={startHidden} disabled={!openAtLogin} onChange={(event) => onToggleStartHidden(event.target.checked)} /><span className="slider"></span></label>
           </div>
@@ -44,7 +47,7 @@ export function SettingsView({
         <div className="setting-card">
           <div className="setting-info">
             <h3>Minimizar para Bandeja</h3>
-            <p style={{ color: '#64748B', fontSize: 13 }}>Mantém downloads ativos em background.</p>
+            <p style={{ color: '#64748B', fontSize: 13 }}>{isMac ? 'Oculta o app e o mantém ativo em background.' : 'Mantém downloads ativos em background.'}</p>
           </div>
           <label className="switch"><input type="checkbox" checked={minimizeToTray} onChange={(event) => onToggleMinimizeTray(event.target.checked)} /><span className="slider"></span></label>
         </div>
