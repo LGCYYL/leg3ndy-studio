@@ -358,6 +358,9 @@ else {
         setupAutoUpdater();
     });
 }
+electron_1.app.on('before-quit', () => {
+    isQuitting = true;
+});
 electron_1.app.on('activate', () => {
     if (!mainWindow || mainWindow.isDestroyed()) {
         createWindow();
