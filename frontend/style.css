@@ -139,6 +139,17 @@ img {
     background: rgba(255, 107, 135, 0.16) !important;
     color: #ffffff;
 }
+
+.macos-drag-bar {
+    position: fixed;
+    top: 0;
+    left: 80px;
+    right: 0;
+    height: 35px;
+    -webkit-app-region: drag;
+    z-index: 9999;
+}
+
 /* --- LAYOUT --- */
 .app-container {
     display: flex;

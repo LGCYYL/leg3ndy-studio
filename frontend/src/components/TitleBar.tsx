@@ -4,7 +4,7 @@ export function TitleBar() {
   const runtimeInfo = window.electronAPI?.getRuntimeInfo?.();
 
   if (runtimeInfo?.usesNativeTitleBar) {
-    return null;
+    return <div className="macos-drag-bar" />;
   }
 
   return (
